@@ -1,0 +1,23 @@
+﻿services:
+  kube-traceback:
+    build: .
+    image: kube-traceback:latest
+    container_name: kube-traceback
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8765:8765"
+    environment:
+      TRACEBACK_MCP_TRANSPORT: "http"
+      TRACEBACK_MCP_HOST: "0.0.0.0"
+      TRACEBACK_MCP_PORT: "8765"
+      TRACEBACK_DEFAULT_NAMESPACE: "default"
+      TRACEBACK_LOG_TAIL_LINES: "40"
+      # The container reads KUBECONFIG=/home/agent/.kube/config (see volumes).
+      KUBECONFIG: "/home/agent/.kube/config"
+    volumes:
+      # Mount your cluster kubeconfig read-only. Adjust the host path to
+      # wherever the file actually lives on the VPS.
+      - type: bind
+        source: /home/you/.kube/config
+        target: /home/agent/.kube/config
+        read_only: true
