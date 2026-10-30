@@ -1,23 +1,39 @@
 ﻿services:
-  kube-traceback:
-    build: .
-    image: kube-traceback:latest
-    container_name: kube-traceback
+  mcp:
+    image: kube-traceback:ci
+    pull_policy: never
     restart: unless-stopped
+
     ports:
       - "127.0.0.1:8765:8765"
+
     environment:
       TRACEBACK_MCP_TRANSPORT: "http"
       TRACEBACK_MCP_HOST: "0.0.0.0"
       TRACEBACK_MCP_PORT: "8765"
-      TRACEBACK_DEFAULT_NAMESPACE: "default"
+      TRACEBACK_DEFAULT_NAMESPACE: "demo"
       TRACEBACK_LOG_TAIL_LINES: "40"
-      # The container reads KUBECONFIG=/home/agent/.kube/config (see volumes).
       KUBECONFIG: "/home/agent/.kube/config"
+
     volumes:
-      # Mount your cluster kubeconfig read-only. Adjust the host path to
-      # wherever the file actually lives on the VPS.
       - type: bind
-        source: /home/you/.kube/config
+        source: /opt/kubetraceback/k3s.yaml
         target: /home/agent/.kube/config
         read_only: true
+        bind:
+          create_host_path: false
+
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen(
+          'http://127.0.0.1:8765/health',
+          timeout=3).close()
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

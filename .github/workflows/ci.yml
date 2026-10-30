@@ -1,4 +1,4 @@
-﻿name: CI and Deploy
+name: CI and Deploy
 
 on:
   push:
@@ -100,16 +100,17 @@ jobs:
             -o ServerAliveCountMax=3
           )
 
-          # Check prerequisites before transferring the image.
+          test -f docker-compose.yml || { echo "Missing docker-compose.yml at repository root" >&2; exit 1; }
+
+          # Check server prerequisites before transferring files.
           ssh "${SSH_OPTIONS[@]}" \
             -p "$SSH_PORT" \
             "$SSH_USER@$SSH_HOST" 'bash -se' <<'REMOTE'
           cd /opt/kubetraceback
-          test -w .
-          test -f compose.yaml
+          test -w . || { echo "Deployment directory is not writable" >&2; exit 1; }
+          test -f k3s.yaml || { echo "Missing /opt/kubetraceback/k3s.yaml" >&2; exit 1; }
           docker info > /dev/null
           docker compose version
-          docker compose config -q
           REMOTE
 
           docker save kube-traceback:ci | gzip \
@@ -118,19 +119,25 @@ jobs:
           scp "${SSH_OPTIONS[@]}" \
             -P "$SSH_PORT" \
             "$SSH_TASK_DIR/image.tar.gz" \
-            "$SSH_USER@$SSH_HOST:/opt/kubetraceback/image.tar.gz"
+            docker-compose.yml \
+            "$SSH_USER@$SSH_HOST:/opt/kubetraceback/"
 
           ssh "${SSH_OPTIONS[@]}" \
             -p "$SSH_PORT" \
             "$SSH_USER@$SSH_HOST" 'bash -se' <<'REMOTE'
           cd /opt/kubetraceback
+          docker compose -f docker-compose.yml config -q
           docker load -i image.tar.gz
           rm -f image.tar.gz
-          docker compose up -d \
+          if ! docker compose -f docker-compose.yml up -d \
             --no-build \
             --force-recreate \
             --wait \
             --wait-timeout 120 \
-            mcp
-          docker compose ps
+            mcp; then
+            docker compose -f docker-compose.yml ps -a
+            docker compose -f docker-compose.yml logs --tail=100 mcp
+            exit 1
+          fi
+          docker compose -f docker-compose.yml ps
           REMOTE
