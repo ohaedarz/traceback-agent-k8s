@@ -1,4 +1,4 @@
-﻿# Step-by-step: giving an external MCP server read-only, auto-renewing access to a Kubernetes cluster
+﻿ Step-by-step: giving an external MCP server read-only, auto-renewing access to a Kubernetes cluster
 
 This is a self-contained runbook. Run it top to bottom and the MCP server will
 be able to observe the cluster with a short-lived, read-only credential that
@@ -49,20 +49,29 @@ you create below, not by the application.
 ## Variables
 
 Set these once. Every block below is expressed in terms of them, so change only
-these to point the runbook at a different cluster.
+these to point the runbook at a different cluster. The variables are grouped by
+the host where the step that uses them runs: the **K8s node** (Steps 1-3) or the
+**MCP host** (Steps 4-8). `CLUSTER` is just a label used in file names, so it
+works on both.
+
+K8s node -- used by Steps 1-3 (run these on the cluster node):
 
 | Variable | Meaning | Example |
 | --- | --- | --- |
-| `CLUSTER` | Short label for the target cluster (used in file names) | `k3s` |
 | `NAMESPACE` | Namespace the read-only ServiceAccount lives in | `monitoring` |
 | `READER_SA` | Name of the read-only ServiceAccount to create | `mcp-readonly` |
 | `TOKEN_TTL` | Lifetime of each minted token | `1h` |
 | `API_URL` | API server address the MCP host dials (in the TLS SAN) | `https://203.0.113.10:6443` |
-| `KUBECONFIG_DIR` | Directory on the MCP host for per-cluster kubeconfigs | `/opt/k8s-mcp/clusters` |
-| `KUBECONFIG_FILE` | The MCP host's kubeconfig for this cluster | `/opt/k8s-mcp/clusters/k3s.yaml` |
-| `HELPER_PATH` | Path of the credential helper on the cluster node | `/usr/local/sbin/k8s-mcp-credentials` |
+| `HELPER_PATH` | Path of the credential helper on the cluster node | `/usr/local/sbin/kube-lab-mcp-credentials` |
 | `HELPER_STATE_DIR` | Directory for helper config on the cluster node | `/etc/k8s-mcp` |
 | `READER_SSH_USER` | Restricted SSH account on the cluster node | `mcp-reader` |
+
+MCP host -- used by Steps 4-8 (run these on the MCP host):
+
+| Variable | Meaning | Example |
+| --- | --- | --- |
+| `KUBECONFIG_DIR` | Directory on the MCP host for per-cluster kubeconfigs | `/opt/k8s-mcp/clusters` |
+| `KUBECONFIG_FILE` | The MCP host's kubeconfig for this cluster | `/opt/k8s-mcp/clusters/k3s.yaml` |
 | `SSH_HOST` | Cluster node host for the MCP host to reach | `203.0.113.10` |
 | `SSH_PORT` | SSH port on the cluster node | `22` |
 | `MCP_HOME` | Directory on the MCP host holding keys and refresh config | `/opt/k8s-mcp` |
@@ -71,11 +80,17 @@ these to point the runbook at a different cluster.
 | `COMPOSE_SERVICE` | The MCP service key in that file | `mcp` |
 | `COMPOSE_PROJECT` | Compose project name (defaults to directory name) | `mcp` |
 
+Shared (label, used in file names on both hosts):
+
+| Variable | Meaning | Example |
+| --- | --- | --- |
+| `CLUSTER` | Short label for the target cluster (used in file names) | `k3s` |
+
 The `READER_SA` and `NAMESPACE` pair is whatever the target cluster uses (or
 you choose). Nothing in these steps depends on a particular name. If a different
 identity already deploys to this cluster, the reader account is a separate one.
 
-## Step 1 -- Create the read-only identity on the cluster
+## Step 1 -- Create the read-only identity on the cluster  *(run on: K8s node)*
 
 Run on the **cluster node**, as an administrator. Create the ServiceAccount, a
 tightly scoped ClusterRole, and the ClusterRoleBinding that ties them together.
@@ -84,17 +99,20 @@ For K3s, prefix `kubectl` with `k3s`; for any other cluster, use your normal
 `kubectl` and admin kubeconfig.
 
 ```bash
-kubectl apply -f - <<'YAML'
+READER_SA="inventory-reader"
+NAMESPACE="demo"
+
+kubectl apply -f - <<YAML
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: READER_SA
-  namespace: NAMESPACE
+  name: "${READER_SA}"
+  namespace: "${NAMESPACE}"
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: READER_SA
+  name: "${READER_SA}"
 rules:
   - apiGroups: [""]
     resources: [pods, events, services]
@@ -109,15 +127,15 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: READER_SA
+  name: "${READER_SA}"
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: READER_SA
+  name: "${READER_SA}"
 subjects:
   - kind: ServiceAccount
-    name: READER_SA
-    namespace: NAMESPACE
+    name: "${READER_SA}"
+    namespace: "${NAMESPACE}"
 YAML
 ```
 
@@ -129,13 +147,16 @@ binding grants this ServiceAccount more than intended.
 Verify the identity can read and cannot write:
 
 ```bash
-kubectl -n NAMESPACE auth can-i get pods --as=system:serviceaccount:NAMESPACE:READER_SA
-kubectl -n NAMESPACE auth can-i create pods --as=system:serviceaccount:NAMESPACE:READER_SA
+kubectl -n "$NAMESPACE" auth can-i get pods \
+  --as="system:serviceaccount:${NAMESPACE}:${READER_SA}"
+
+kubectl -n "$NAMESPACE" auth can-i create pods \
+  --as="system:serviceaccount:${NAMESPACE}:${READER_SA}"
 ```
 
 The first must print `yes`, the second `no`.
 
-## Step 2 -- Install the credential helper on the cluster
+## Step 2 -- Install the credential helper on the cluster  *(run on: K8s node)*
 
 The helper mints one short-lived token for `READER_SA` and emits the material the
 MCP host needs to build its kubeconfig: the API server URL, the CA (read from the
@@ -148,13 +169,28 @@ library only (3.8+). The `K8S_KUBECTL` list is the one change for a non-K3s
 cluster: it is the kubectl command plus the admin kubeconfig, with no arguments
 of its own.
 
-```bash
-install -d -m 755 HELPER_STATE_DIR
-printf '%s\n' 'API_URL' > HELPER_STATE_DIR/api-server
-chown root:root HELPER_STATE_DIR/api-server
-chmod 644 HELPER_STATE_DIR/api-server
+Copy install-mcp-helper.sh to the host and run:
 
-tee HELPER_PATH >/dev/null <<'SH'
+```bash
+sudo env \
+  HELPER_STATE_DIR="$HELPER_STATE_DIR" \
+  HELPER_PATH="$HELPER_PATH" \
+  API_URL="$API_URL" \
+  READER_SA="$READER_SA" \
+  NAMESPACE="$NAMESPACE" \
+  TOKEN_TTL="$TOKEN_TTL" \
+  bash ./install-mcp-helper.sh
+```
+
+Alternatively, run on host:
+
+```bash
+install -d -m 755 "$HELPER_STATE_DIR"
+printf '%s\n' "$API_URL" > "$HELPER_STATE_DIR/api-server"
+chown root:root "$HELPER_STATE_DIR/api-server"
+chmod 644 "$HELPER_STATE_DIR/api-server"
+
+tee "$HELPER_PATH" >/dev/null <<SH
 #!/bin/sh
 exec /usr/bin/python3 -I - <<'PY'
 import base64
@@ -164,13 +200,11 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-# For K3s use: ["/usr/local/bin/k3s", "kubectl"].
-# For any other cluster, use the admin kubeconfig:
 K8S_KUBECTL = ["/usr/local/bin/k3s", "kubectl", "--kubeconfig=/etc/rancher/k3s/k3s.yaml"]
-STATE_DIR = Path("HELPER_STATE_DIR")
-SA = "READER_SA"
-NS = "NAMESPACE"
-DURATION = "TOKEN_TTL"
+STATE_DIR = Path("${HELPER_STATE_DIR}")
+SA = "${READER_SA}"
+NS = "${NAMESPACE}"
+DURATION = "${TOKEN_TTL}"
 
 def kube(*args):
     return subprocess.check_output(K8S_KUBECTL + list(args), text=True, timeout=30)
@@ -179,21 +213,25 @@ server = (STATE_DIR / "api-server").read_text().strip()
 url = urlsplit(server)
 if url.scheme != "https" or not url.hostname or url.username or url.password:
     raise SystemExit("Configure a valid HTTPS API URL in " + str(STATE_DIR / "api-server"))
+
 admin = json.loads(kube("config", "view", "--minify", "-o", "json"))
 ca = admin["clusters"][0]["cluster"]["certificate-authority-data"]
 token = kube("-n", NS, "create", "token", SA, "--duration=" + DURATION).strip()
+
 # Read the API-issued expiry; decoding is metadata inspection, not signature verification.
 part = token.split(".")[1]
 claims = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
 expiry = int(claims["exp"])
 if expiry - time.time() < 1200:
     raise SystemExit("Issued token lifetime is under 20 minutes; review server policy and timer intervals")
+
 print(json.dumps({"K8S_SERVER": server, "K8S_CA_DATA": ca, "K8S_TOKEN": token,
                   "K8S_SERVICE_ACCOUNT": SA, "expires_at": expiry}))
 PY
 SH
-chown root:root HELPER_PATH
-chmod 755 HELPER_PATH
+
+chown root:root "$HELPER_PATH"
+chmod 755 "$HELPER_PATH"
 ```
 
 Replace the literal `HELPER_PATH`, `HELPER_STATE_DIR`, `API_URL`, `READER_SA`,
@@ -208,31 +246,50 @@ you do not display it:
 HELPER_PATH >/dev/null && echo "helper OK"
 ```
 
-## Step 3 -- Create the restricted SSH account on the cluster
+## Step 3 -- Create the restricted SSH account on the cluster  *(run on: K8s node)*
 
-Run on the **cluster node**, as an administrator. Create a dedicated account whose
-only capability is to run the helper via passwordless sudo. This is the durable
-bootstrap credential the MCP host holds; revoking it is deleting one line from
-`authorized_keys`.
+### Create the MCP reader SSH account
+
+Run this on the **cluster node** as root, with `READER_SSH_USER` and `HELPER_PATH` already defined. This creates the dedicated account if needed and prepares its `.ssh` directory.
 
 ```bash
-useradd --create-home --shell /bin/sh READER_SSH_USER
-install -d -m 700 -o READER_SSH_USER -g "$(id -gn READER_SSH_USER)" /home/READER_SSH_USER/.ssh
+if ! id "$READER_SSH_USER" >/dev/null 2>&1; then
+  useradd --create-home --home-dir "/home/$READER_SSH_USER" \
+    --shell /bin/sh "$READER_SSH_USER"
+fi
 
+reader_home=$(getent passwd "$READER_SSH_USER" | cut -d: -f6)
+
+install -d -m 700 \
+  -o "$READER_SSH_USER" \
+  -g "$(id -gn "$READER_SSH_USER")" \
+  "$reader_home/.ssh"
+```
+
+Generate the sudoers rule with the actual username and helper path.
+
+```bash
+printf '%s ALL=(root) NOPASSWD: %s ""\n' \
+  "$READER_SSH_USER" "$HELPER_PATH"
+```
+
+Open the sudoers file.
+
+```bash
 visudo -f /etc/sudoers.d/k8s-mcp
 ```
 
-Put exactly this rule in the sudoers file (replace the placeholders):
+Paste the **line printed by `printf`**, including the trailing `""`, then save and exit. The trailing `""` allows the helper to run without arguments only. Keep the helper, its parent directory, and `$HELPER_STATE_DIR` root-owned and unwritable by the reader account.
 
-```sudoers
-READER_SSH_USER ALL=(root) NOPASSWD: HELPER_PATH ""
+Verify that the reader can run the helper without a password. Redirect its output to keep the token out of the terminal.
+
+```bash
+sudo -u "$READER_SSH_USER" -- sudo -n "$HELPER_PATH" >/dev/null &&
+  echo "Reader helper OK"
 ```
 
-Keep the helper, its parent directory, and `HELPER_STATE_DIR` root-owned and
-unwritable by `READER_SSH_USER`. This sudo rule is separate from anything a
-deploy pipeline uses; the two must not share a key.
 
-## Step 4 -- Install the MCP host's SSH key
+## Step 4 -- Install the MCP host's SSH key  *(run on: MCP host)*
 
 On the **MCP host**, create the private key (do not overwrite an existing one)
 and display the public key:
@@ -286,7 +343,7 @@ ssh -F /dev/null -i MCP_HOME/reader_ed25519 -p SSH_PORT \
 If it prints `channel OK`, the channel is correct and it produced a credential.
 Do not let that command's stdout into your shell history or a log.
 
-## Step 5 -- Generate the MCP host's kubeconfig
+## Step 5 -- Generate the MCP host's kubeconfig  *(run on: MCP host)*
 
 The MCP server consumes a standard kubeconfig file. This first-run script calls
 the helper over the restricted channel, validates the returned credential, and
@@ -456,7 +513,7 @@ because a running client keeps the token it loaded at start and will not pick up
 a new file. It does not print the token, and it bypasses HTTP proxies for the
 direct cluster connection, so the MCP host must reach the API directly.
 
-## Step 6 -- Point the Compose service at the kubeconfig file
+## Step 6 -- Point the Compose service at the kubeconfig file  *(run on: MCP host)*
 
 Edit the MCP's Compose service so it loads `KUBECONFIG_FILE`. Preserve the image,
 build, ports, volumes, and every other setting. Set `KUBECONFIG` to the file in
@@ -476,7 +533,7 @@ legacy kubeconfig the app might otherwise use, so this file is the only
 credential source. Remember that `environment:` overrides `env_file`. This
 fragment is not a complete Compose file.
 
-## Step 7 -- First run and install the timer
+## Step 7 -- First run and install the timer  *(run on: MCP host)*
 
 On the **MCP host**, run the refresh script once. It fetches the initial
 credential and starts the MCP with it:
@@ -529,7 +586,7 @@ When you deploy a new MCP image later, run the refresh service before starting
 Compose so it loads a current credential. Never restore an old token from CI or a
 `.env` afterward; a plain restart does not load new credential contents.
 
-## Step 8 -- Verify
+## Step 8 -- Verify  *(run on: MCP host)*
 
 1. Use the MCP tools to list pods and read a pod's logs. A successful call proves
    the credential is valid and the RBAC allows it.
@@ -612,7 +669,7 @@ set, for a K3s cluster, to make the variables concrete.
 | `TOKEN_TTL` | `1h` |
 | `API_URL` | `https://203.0.113.10:6443` |
 | `KUBECONFIG_FILE` | `/opt/k8s-mcp/clusters/k3s.yaml` |
-| `HELPER_PATH` | `/usr/local/sbin/k8s-mcp-credentials` |
+| `HELPER_PATH` | `/usr/local/sbin/kube-lab-mcp-credentials` |
 | `HELPER_STATE_DIR` | `/etc/k8s-mcp` |
 | `READER_SSH_USER` | `mcp-reader` |
 | `SSH_HOST` | `203.0.113.10` |
@@ -622,6 +679,13 @@ set, for a K3s cluster, to make the variables concrete.
 | `COMPOSE_FILE` | `docker-compose.yml` |
 | `COMPOSE_SERVICE` | `mcp` |
 | `COMPOSE_PROJECT` | `mcp` |
+
+Note for the kube-lab node (`K3S-SETUP.md` block 8a in the `kube-lab` repo):
+the helper there is provisioned with `HELPER_STATE_DIR=/etc/kube-lab` and reads
+the API URL from `/etc/kube-lab/mcp-api-server` (the file name differs from the
+generic `api-server` written by step 2). If you install step 2's helper verbatim
+instead, either point it at the same location or keep `/etc/k8s-mcp` +
+`api-server` consistently.
 
 ## References
 
