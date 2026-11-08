@@ -288,94 +288,168 @@ sudo -u "$READER_SSH_USER" -- sudo -n "$HELPER_PATH" >/dev/null &&
   echo "Reader helper OK"
 ```
 
+## Step 4 — Install and test the MCP SSH key
 
-## Step 4 -- Install the MCP host's SSH key  *(run on: MCP host)*
+Use two terminals. Run the **MCP host** blocks as root in the shell where you set `MCP_HOME`, `SSH_HOST`, `SSH_PORT`, and `READER_SSH_USER`. Run the **K3s server** blocks as root in your trusted administrator session, with `READER_SSH_USER` and `HELPER_PATH` set as in Step 3.
 
-On the **MCP host**, create the private key (do not overwrite an existing one)
-and display the public key:
+`SSH_HOST` must be the actual K3s server IP or hostname. `SSH_PORT` is its SSH port, usually `22`.
 
-```bash
-install -d -m 700 MCP_HOME
-ssh-keygen -t ed25519 -N '' -C mcp-token-refresh -f MCP_HOME/reader_ed25519
-cat MCP_HOME/reader_ed25519.pub
-```
+### 4.1 — Get the MCP public key on the MCP host
 
-Copy that public key to the **cluster node**. In
-`/home/READER_SSH_USER/.ssh/authorized_keys`, put the `restrict` options, the
-forced command, and the key on a single line (replace `AAA...` with the real
-public key):
-
-```text
-restrict,command="sudo -n HELPER_PATH" ssh-ed25519 AAA... mcp-token-refresh
-```
-
-Then fix ownership and permissions on the **cluster node**:
+Create the dedicated key if you do not already have one. This key is separate from the GitHub Actions deployment key.
 
 ```bash
-chown READER_SSH_USER:"$(id -gn READER_SSH_USER)" /home/READER_SSH_USER/.ssh/authorized_keys
-chmod 600 /home/READER_SSH_USER/.ssh/authorized_keys
+install -d -m 700 "${MCP_HOME:?Set MCP_HOME first}"
+
+if [ ! -e "$MCP_HOME/reader_ed25519" ] && [ ! -e "$MCP_HOME/reader_ed25519.pub" ]; then
+  ssh-keygen -t ed25519 -N '' -C mcp-token-refresh \
+    -f "$MCP_HOME/reader_ed25519"
+fi
+
+ssh-keygen -y -f "$MCP_HOME/reader_ed25519"
 ```
 
-The key can only request reader credentials. It cannot open a shell, forward
-ports, or run any other command. `restrict` requires an OpenSSH version that
-supports that key option. If this account already has other unrestricted keys or
-bindings, review them, because they would widen what the MCP host can do.
+Copy the entire output line beginning with `ssh-ed25519`. Keep the private key file `reader_ed25519` on the MCP host.
 
-On the **MCP host**, seed `MCP_HOME/known_hosts` with the cluster node's
-independently verified SSH host key. For a non-default port, the entry uses
-`[hostname]:port`. Verify the fingerprint against the cluster's control plane or
-provider console before trusting a scan. Set permissions:
+### 4.2 — Install the restricted public key on the K3s server
+
+Confirm the reader account from Step 3 exists and prepare its `.ssh` directory.
 
 ```bash
-chown root:root MCP_HOME/known_hosts
-chmod 600 MCP_HOME/known_hosts
+reader_home=$(getent passwd "${READER_SSH_USER:?Set READER_SSH_USER first}" | cut -d: -f6)
+reader_group=$(id -gn "$READER_SSH_USER")
+authorized_keys="${reader_home:?Reader account missing. Complete Step 3 first}/.ssh/authorized_keys"
+
+install -d -m 700 -o "$READER_SSH_USER" -g "$reader_group" \
+  "$reader_home/.ssh"
 ```
 
-Confirm the restricted channel works end to end from the **MCP host**:
+Run this command by itself, then paste the **MCP public key** from Step 4.1 at the prompt.
 
 ```bash
-ssh -F /dev/null -i MCP_HOME/reader_ed25519 -p SSH_PORT \
+IFS= read -r -p 'Paste the MCP public key: ' MCP_PUBLIC_KEY
+```
+
+Print the complete restricted entry.
+
+```bash
+printf 'restrict,command="sudo -n %s" %s\n' \
+  "${HELPER_PATH:?Set HELPER_PATH first}" \
+  "${MCP_PUBLIC_KEY:?Paste the MCP public key first}"
+```
+
+Open the file and paste the printed entry as **one line**. If the same key is already present, replace its existing line and preserve the other entries.
+
+```bash
+nano "$authorized_keys"
+```
+
+Save the file, then set ownership and permissions.
+
+```bash
+chown "$READER_SSH_USER:$reader_group" "$authorized_keys"
+chmod 600 "$authorized_keys"
+```
+
+### 4.3 — Get the SSH host key from the K3s server
+
+From the trusted administrator session on the **K3s server**, run:
+
+```bash
+cat /etc/ssh/ssh_host_ed25519_key.pub
+```
+
+Copy the entire `ssh-ed25519` line. This is the **server’s public host key**, which the MCP host uses to verify the server’s identity.
+
+### 4.4 — Add the server’s host key to `known_hosts` on the MCP host
+
+Back on the **MCP host**, run this command by itself. Paste the **server host key** from Step 4.3 at the prompt.
+
+```bash
+IFS= read -r -p 'Paste the K3s server public host key: ' SERVER_HOST_KEY
+```
+
+Add it to the exact file the SSH test will read. Use the same address and port as the test.
+
+```bash
+host_entry="${SSH_HOST:?Set SSH_HOST to the actual K3s server address}"
+
+if [ "${SSH_PORT:?Set SSH_PORT first}" != 22 ]; then
+  host_entry="[$SSH_HOST]:$SSH_PORT"
+fi
+
+known_hosts="${MCP_HOME:?Set MCP_HOME first}/known_hosts"
+entry="$host_entry ${SERVER_HOST_KEY:?Paste the server host key first}"
+
+if ! grep -Fqx -- "$entry" "$known_hosts" 2>/dev/null; then
+  (umask 077; printf '%s\n' "$entry" >> "$known_hosts")
+fi
+
+chown root:root "$known_hosts"
+chmod 600 "$known_hosts"
+ssh-keygen -F "$host_entry" -f "$known_hosts"
+```
+
+### 4.5 — Test the connection from the MCP host
+
+```bash
+ssh -nT -F /dev/null \
+  -i "$MCP_HOME/reader_ed25519" -p "$SSH_PORT" \
+  -o ConnectTimeout=10 \
   -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-  -o UserKnownHostsFile=MCP_HOME/known_hosts \
-  READER_SSH_USER@SSH_HOST >/dev/null && echo "channel OK"
+  -o UserKnownHostsFile="$MCP_HOME/known_hosts" \
+  "${READER_SSH_USER:?Set READER_SSH_USER first}@$SSH_HOST" \
+  >/dev/null && echo "channel OK"
 ```
 
-If it prints `channel OK`, the channel is correct and it produced a credential.
-Do not let that command's stdout into your shell history or a log.
-
+`channel OK` confirms that SSH authenticated with the reader key and the credential helper exited successfully. Keep `>/dev/null` so the Kubernetes token stays off the screen. If the test fails, add `-vvv` to the SSH command and keep the redirect in place.
 ## Step 5 -- Generate the MCP host's kubeconfig  *(run on: MCP host)*
 
 The MCP server consumes a standard kubeconfig file. This first-run script calls
 the helper over the restricted channel, validates the returned credential, and
-writes `KUBECONFIG_FILE`.
+writes `$KUBECONFIG_FILE`.
 
-Create `MCP_HOME/refresh.json` on the **MCP host** (host settings, not CI
+Create `$MCP_HOME/refresh.json` on the **MCP host** (host settings, not CI
 variables). Use the same Compose project, file, and directory the MCP normally
-runs with:
+runs with. The heredoc is unquoted on purpose so the `"$VAR"` values are expanded
+from the variables above:
 
 ```bash
-tee MCP_HOME/refresh.json >/dev/null <<'JSON'
+MCP_HOME="/opt/k8s-mcp"
+SSH_HOST="203.0.113.10"
+SSH_PORT="22"
+KUBECONFIG_FILE="/opt/k8s-mcp/clusters/k3s.yaml"
+READER_SA="mcp-readonly"
+COMPOSE_DIR="/opt/mcp"
+COMPOSE_FILE="docker-compose.yml"
+COMPOSE_PROJECT="mcp"
+COMPOSE_SERVICE="mcp"
+
+tee "$MCP_HOME/refresh.json" >/dev/null <<JSON
 {
-  "ssh_host": "SSH_HOST",
-  "ssh_port": SSH_PORT,
-  "kubeconfig_file": "KUBECONFIG_FILE",
-  "expected_service_account": "READER_SA",
-  "compose_directory": "COMPOSE_DIR",
-  "compose_file": "COMPOSE_FILE",
-  "compose_project": "COMPOSE_PROJECT",
-  "compose_service": "COMPOSE_SERVICE"
+  "ssh_host": "$SSH_HOST",
+  "ssh_port": $SSH_PORT,
+  "kubeconfig_file": "$KUBECONFIG_FILE",
+  "expected_service_account": "$READER_SA",
+  "compose_directory": "$COMPOSE_DIR",
+  "compose_file": "$COMPOSE_FILE",
+  "compose_project": "$COMPOSE_PROJECT",
+  "compose_service": "$COMPOSE_SERVICE"
 }
 JSON
-chmod 600 MCP_HOME/refresh.json
+chmod 600 "$MCP_HOME/refresh.json"
 ```
 
 Install the refresh script on the **MCP host** (Python 3, OpenSSH client, and
 Docker Compose v2 required). It runs as root because it recreates the Compose
-service. Replace the literal `MCP_HOME` and `KUBECONFIG_DIR` placeholders; keep
-the validation as-is.
+service. `MCP_HOME` and `KUBECONFIG_DIR` are baked in from the variables; keep the
+validation as-is:
 
 ```bash
-tee /usr/local/sbin/refresh-k8s-mcp >/dev/null <<'PY'
+MCP_HOME="/opt/k8s-mcp"
+KUBECONFIG_DIR="/opt/k8s-mcp/clusters"
+
+tee /usr/local/sbin/refresh-k8s-mcp >/dev/null <<PY
 #!/usr/bin/python3 -I
 import base64
 import fcntl
@@ -389,8 +463,8 @@ import time
 import urllib.request
 from pathlib import Path
 
-ROOT = Path("MCP_HOME")
-CLUSTERS = Path("KUBECONFIG_DIR")
+ROOT = Path("$MCP_HOME")
+CLUSTERS = Path("$KUBECONFIG_DIR")
 KEY = ROOT / "reader_ed25519"
 HOSTS = ROOT / "known_hosts"
 CONF = ROOT / "refresh.json"
@@ -515,17 +589,20 @@ direct cluster connection, so the MCP host must reach the API directly.
 
 ## Step 6 -- Point the Compose service at the kubeconfig file  *(run on: MCP host)*
 
-Edit the MCP's Compose service so it loads `KUBECONFIG_FILE`. Preserve the image,
-build, ports, volumes, and every other setting. Set `KUBECONFIG` to the file in
-the service's `environment:`. `mcp` below is the Compose service key; replace it
-consistently if yours differs.
+Edit the MCP's Compose service so it loads `$KUBECONFIG_FILE`. Preserve the image,
+build, ports, and every other setting. `COMPOSE_SERVICE` is the service key in the
+file; this repo's `docker-compose.yml` uses `mcp`. Bind-mount the file read-only to
+where the container's `KUBECONFIG` points:
 
 ```yaml
 services:
-  mcp:
+  mcp:            # $COMPOSE_SERVICE -- this repo's docker-compose.yml key
     # Keep the existing image/build, ports, volumes, and other settings.
     environment:
-      KUBECONFIG: KUBECONFIG_FILE
+      KUBECONFIG: /home/agent/.kube/config
+    volumes:
+      # Bind-mount $KUBECONFIG_FILE read-only to the path above
+      - /opt/k8s-mcp/clusters/k3s.yaml:/home/agent/.kube/config:ro
 ```
 
 Remove any full-admin kubeconfig mount, any static `K8S_*` variables, and any
@@ -544,7 +621,7 @@ credential and starts the MCP with it:
 
 If it succeeds, install the timer. It checks every five minutes and rotates when
 fewer than fifteen minutes remain, then recreates the container. It does not
-recreate on every check.
+recreate on every check:
 
 ```bash
 tee /etc/systemd/system/k8s-mcp-refresh.service >/dev/null <<'UNIT'
@@ -595,19 +672,20 @@ Compose so it loads a current credential. Never restore an old token from CI or 
 3. Confirm unattended renewal across at least one token lifetime: the journal
    should show a rotation followed by successful calls. A successful startup
    alone does not prove renewal works.
-4. To force a rotation without waiting, delete `KUBECONFIG_FILE` and
-   `MCP_HOME/applied.sha256`, then start the refresh service. The running
+4. To force a rotation without waiting, delete `$KUBECONFIG_FILE` and
+   `$MCP_HOME/applied.sha256`, then start the refresh service. The running
    container keeps its current credential until it is recreated. Do this only
    after the first successful run.
 
-Read the current expiry without printing the token (on the **MCP host**):
+Read the current expiry without printing the token:
 
 ```bash
-python3 - <<'PY'
-import base64, json
+KUBECONFIG_FILE="/opt/k8s-mcp/clusters/k3s.yaml"
+python3 - "$KUBECONFIG_FILE" <<'PY'
+import base64, json, sys
 from datetime import datetime, timezone
 from pathlib import Path
-text = Path("KUBECONFIG_FILE").read_text()
+text = Path(sys.argv[1]).read_text()
 token = [line.split(None, 1)[1].strip() for line in text.splitlines()
          if line.strip().startswith("token: ")][0]
 part = token.split(".")[1]
@@ -651,15 +729,18 @@ a credential valid while its source is unreachable.
   legacy kubeconfig, confirm `refresh.json` matches the real Compose project,
   file, directory, and service, and confirm the container was recreated.
 - **Cluster reinstall** -- recreate the reader RBAC, restore the helper and
-  `api-server` config, and rerun the refresh service. The new CA and token are
-  fetched together. Independently verify any changed SSH host key before updating
-  `known_hosts`; a reinstall does not always rotate a retained CA, so inspect
-  actual state rather than assuming.
+  `mcp-api-server` config, and rerun the refresh service. The new CA and token
+  are fetched together. Independently verify any changed SSH host key before
+  updating `known_hosts`; a reinstall does not always rotate a retained CA, so
+  inspect actual state rather than assuming.
 
 ## Reference values (one concrete example)
 
 The steps above are identical for every cluster; the table below is one filled-in
-set, for a K3s cluster, to make the variables concrete.
+set, for a K3s cluster (the kube-lab node), to make the variables concrete. For
+that node, `HELPER_STATE_DIR` is `/etc/kube-lab` and the helper reads its API URL
+from `/etc/kube-lab/mcp-api-server` (see `K3S-SETUP.md` block 8a in the
+`kube-lab` repo).
 
 | Variable | Value |
 | --- | --- |
@@ -668,24 +749,18 @@ set, for a K3s cluster, to make the variables concrete.
 | `READER_SA` | `inventory-reader` |
 | `TOKEN_TTL` | `1h` |
 | `API_URL` | `https://203.0.113.10:6443` |
-| `KUBECONFIG_FILE` | `/opt/k8s-mcp/clusters/k3s.yaml` |
 | `HELPER_PATH` | `/usr/local/sbin/kube-lab-mcp-credentials` |
-| `HELPER_STATE_DIR` | `/etc/k8s-mcp` |
+| `HELPER_STATE_DIR` | `/etc/kube-lab` |
 | `READER_SSH_USER` | `mcp-reader` |
 | `SSH_HOST` | `203.0.113.10` |
 | `SSH_PORT` | `22` |
 | `MCP_HOME` | `/opt/k8s-mcp` |
+| `KUBECONFIG_DIR` | `/opt/k8s-mcp/clusters` |
+| `KUBECONFIG_FILE` | `/opt/k8s-mcp/clusters/k3s.yaml` |
 | `COMPOSE_DIR` | `/opt/mcp` |
 | `COMPOSE_FILE` | `docker-compose.yml` |
 | `COMPOSE_SERVICE` | `mcp` |
 | `COMPOSE_PROJECT` | `mcp` |
-
-Note for the kube-lab node (`K3S-SETUP.md` block 8a in the `kube-lab` repo):
-the helper there is provisioned with `HELPER_STATE_DIR=/etc/kube-lab` and reads
-the API URL from `/etc/kube-lab/mcp-api-server` (the file name differs from the
-generic `api-server` written by step 2). If you install step 2's helper verbatim
-instead, either point it at the same location or keep `/etc/k8s-mcp` +
-`api-server` consistently.
 
 ## References
 
