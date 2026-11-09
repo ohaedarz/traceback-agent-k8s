@@ -17,7 +17,8 @@
 
     volumes:
       - type: bind
-        source: /opt/kubetraceback/k3s.yaml
+        # must match $KUBECONFIG_FILE, see RunBook
+        source: /opt/k8s-mcp/clusters/k3s.yaml
         target: /home/agent/.kube/config
         read_only: true
         bind:

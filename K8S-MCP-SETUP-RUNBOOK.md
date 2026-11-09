@@ -420,7 +420,7 @@ SSH_HOST="203.0.113.10"
 SSH_PORT="22"
 KUBECONFIG_FILE="/opt/k8s-mcp/clusters/k3s.yaml"
 READER_SA="mcp-readonly"
-COMPOSE_DIR="/opt/mcp"
+COMPOSE_DIR="/opt/kubetraceback/"
 COMPOSE_FILE="docker-compose.yml"
 COMPOSE_PROJECT="mcp"
 COMPOSE_SERVICE="mcp"
@@ -445,140 +445,10 @@ Docker Compose v2 required). It runs as root because it recreates the Compose
 service. `MCP_HOME` and `KUBECONFIG_DIR` are baked in from the variables; keep the
 validation as-is:
 
+COPY the script on MCP host and run: 
+
 ```bash
-MCP_HOME="/opt/k8s-mcp"
-KUBECONFIG_DIR="/opt/k8s-mcp/clusters"
-
-tee /usr/local/sbin/refresh-k8s-mcp >/dev/null <<PY
-#!/usr/bin/python3 -I
-import base64
-import fcntl
-import hashlib
-import json
-import os
-import ssl
-import subprocess
-import tempfile
-import time
-import urllib.request
-from pathlib import Path
-
-ROOT = Path("$MCP_HOME")
-CLUSTERS = Path("$KUBECONFIG_DIR")
-KEY = ROOT / "reader_ed25519"
-HOSTS = ROOT / "known_hosts"
-CONF = ROOT / "refresh.json"
-MIN_REMAINING = 15 * 60
-VALIDATE_GRACE = 20 * 60
-os.umask(0o077)
-
-def atomic_write(path, data: bytes):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(dir=str(path.parent), prefix=".refresh-")
-    try:
-        with os.fdopen(fd, "wb") as output:
-            output.write(data)
-        os.replace(temporary, path)
-    finally:
-        Path(temporary).unlink(missing_ok=True)
-
-def token_expiry(token: str) -> int:
-    part = token.split(".")[1]
-    return int(json.loads(base64.urlsafe_b64decode(
-        part + "=" * (-len(part) % 4)))["exp"])
-
-def read_kubeconfig(path: Path):
-    text = path.read_text()
-    user_block = [line.split(None, 1)[1].strip() for line in text.splitlines()
-                  if line.strip().startswith("token: ")]
-    server = [line.split(None, 1)[1].strip() for line in text.splitlines()
-              if line.strip().startswith("server: ")][0]
-    return server, user_block[0] if user_block else ""
-with (ROOT / "refresh.lock").open("a") as lock:
-    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    conf = json.loads(CONF.read_text())
-    kc = Path(conf["kubeconfig_file"])
-    digest = ""
-    pending = False
-    if kc.exists():
-        data = kc.read_bytes()
-        digest = hashlib.sha256(data).hexdigest()
-        try:
-            fresh = token_expiry(read_kubeconfig(kc)[1]) - time.time() > MIN_REMAINING
-        except Exception:
-            fresh = False
-        applied = (ROOT / "applied.sha256").exists() and \
-            (ROOT / "applied.sha256").read_text().strip() == digest
-        if fresh and applied:
-            print("Kubernetes credential still valid; no rotation needed")
-            raise SystemExit(0)
-        pending = fresh and not applied
-
-    if not pending:
-        ssh = ["ssh", "-F", "/dev/null", "-i", str(KEY), "-p", str(int(conf["ssh_port"])),
-               "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
-               "-o", "StrictHostKeyChecking=yes",
-               "-o", "UserKnownHostsFile=" + str(HOSTS),
-               "-o", "ConnectTimeout=15", conf["ssh_host"]]
-        result = subprocess.run(ssh, check=True, capture_output=True, text=True, timeout=90)
-        values = json.loads(result.stdout)
-        if token_expiry(values["K8S_TOKEN"]) - time.time() < VALIDATE_GRACE:
-            raise SystemExit("New token expires too soon; check token policy")
-        if values["K8S_SERVICE_ACCOUNT"] != conf["expected_service_account"]:
-            raise SystemExit("Unexpected ServiceAccount in credential response")
-        for field in ("K8S_SERVER", "K8S_CA_DATA", "K8S_TOKEN", "K8S_SERVICE_ACCOUNT"):
-            value = values[field]
-            if not isinstance(value, str) or not value or any(c.isspace() for c in value):
-                raise SystemExit("Invalid credential response field: " + field)
-        if not values["K8S_SERVER"].startswith("https://"):
-            raise SystemExit("Kubernetes URL must use HTTPS")
-        # Verify CA, TLS name, bearer token, and pod-read permission before replacing.
-        ca = base64.b64decode(values["K8S_CA_DATA"], validate=True).decode()
-        context = ssl.create_default_context(cadata=ca)
-        opener = urllib.request.build_opener(
-            urllib.request.ProxyHandler({}),
-            urllib.request.HTTPSHandler(context=context))
-        request = urllib.request.Request(
-            values["K8S_SERVER"].rstrip("/") + "/api/v1/pods?limit=1",
-            headers={"Authorization": "Bearer " + values["K8S_TOKEN"]})
-        with opener.open(request, timeout=30) as response:
-            response.read()
-        kc.parent.mkdir(parents=True, exist_ok=True)
-        yaml = (
-            "apiVersion: v1\n"
-            "kind: Config\n"
-            "clusters:\n"
-            "- name: default\n"
-            "  cluster:\n"
-            "    server: " + values["K8S_SERVER"] + "\n"
-            "    certificate-authority-data: " + values["K8S_CA_DATA"] + "\n"
-            "contexts:\n"
-            "- name: default\n"
-            "  context:\n"
-            "    cluster: default\n"
-            "    user: default\n"
-            "current-context: default\n"
-            "users:\n"
-            "- name: default\n"
-            "  user:\n"
-            "    token: " + values["K8S_TOKEN"] + "\n"
-        )
-        data = yaml.encode()
-        digest = hashlib.sha256(data).hexdigest()
-        atomic_write(kc, data)
-
-    # Replace the process so it loads the new file; a running client keeps its old token.
-    compose = ["docker", "compose", "-f", conf["compose_file"],
-               "-p", conf["compose_project"]]
-    command = compose + ["up", "-d", "--no-deps", "--no-build",
-                         "--force-recreate", conf["compose_service"]]
-    subprocess.run(command, cwd=conf["compose_directory"], check=True, timeout=120)
-    # Mark only after Compose succeeds; a failure is retried at the next tick.
-    atomic_write(ROOT / "applied.sha256", (digest + "\n").encode())
-    print("Kubernetes credential applied; MCP container recreated")
-PY
-chown root:root /usr/local/sbin/refresh-k8s-mcp
-chmod 700 /usr/local/sbin/refresh-k8s-mcp
+sudo bash ./install-mcp-refresh.sh
 ```
 
 The script writes the kubeconfig atomically and only after the new credential
@@ -757,7 +627,7 @@ from `/etc/kube-lab/mcp-api-server` (see `K3S-SETUP.md` block 8a in the
 | `MCP_HOME` | `/opt/k8s-mcp` |
 | `KUBECONFIG_DIR` | `/opt/k8s-mcp/clusters` |
 | `KUBECONFIG_FILE` | `/opt/k8s-mcp/clusters/k3s.yaml` |
-| `COMPOSE_DIR` | `/opt/mcp` |
+| `COMPOSE_DIR` | `/opt/kubetraceback/` |
 | `COMPOSE_FILE` | `docker-compose.yml` |
 | `COMPOSE_SERVICE` | `mcp` |
 | `COMPOSE_PROJECT` | `mcp` |
