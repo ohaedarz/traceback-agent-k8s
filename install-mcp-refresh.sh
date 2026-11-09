@@ -37,16 +37,20 @@ ROOT = Path(MCP_HOME)
 KEY = ROOT / "reader_ed25519"
 HOSTS = ROOT / "known_hosts"
 CONF = ROOT / "refresh.json"
+MCP_KUBECONFIG_GID = 10001
 MIN_REMAINING = 15 * 60
 VALIDATE_GRACE = 20 * 60
 os.umask(0o077)
 
-def atomic_write(path, data: bytes):
+def atomic_write(path, data: bytes, *, read_gid=None):
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(dir=str(path.parent), prefix=".refresh-")
     try:
         with os.fdopen(fd, "wb") as output:
             output.write(data)
+            if read_gid is not None:
+                os.fchown(output.fileno(), 0, read_gid)
+                os.fchmod(output.fileno(), 0o640)
         os.replace(temporary, path)
     finally:
         Path(temporary).unlink(missing_ok=True)
@@ -137,7 +141,7 @@ with (ROOT / "refresh.lock").open("a") as lock:
         )
         data = yaml.encode()
         digest = hashlib.sha256(data).hexdigest()
-        atomic_write(kc, data)
+        atomic_write(kc, data, read_gid=MCP_KUBECONFIG_GID)
 
     # Replace the process so it loads the new file; a running client keeps its old token.
     compose = ["docker", "compose", "-f", conf["compose_file"],
