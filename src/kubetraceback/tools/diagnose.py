@@ -5,6 +5,23 @@ from kubetraceback.tools import mcp
 from kubetraceback import auth, k8s_client
 
 
+def _restart_history(cs) -> str | None:
+    """One-line summary of the last termination before the current state."""
+    last = getattr(cs, "last_state", None)
+    if last is None:
+        return None
+    term = getattr(last, "terminated", None)
+    if term is None:
+        return None
+    detail = f"reason {term.reason}" if term.reason else ""
+    if term.exit_code is not None:
+        detail = (detail + ", " if detail else "") + f"exit code {term.exit_code}"
+    msg = (term.message or "").strip().replace("\n", " ")
+    if msg and len(msg) <= 160:
+        detail = (detail + " - " if detail else "") + msg
+    return f"- last termination: {detail}" if detail else None
+
+
 def _tail(text: str, n: int) -> str:
     lines = (text or "").splitlines()
     return "\n".join(lines[-n:]) if len(lines) > n else (text or "")
@@ -50,6 +67,9 @@ def diagnose_pod_crash(pod_name: str, namespace: str = "default") -> str:
                 sections.append("- state: running")
             if cs.restart_count:
                 sections.append(f"- restarts: {cs.restart_count}")
+            hist = _restart_history(cs)
+            if hist:
+                sections.append(hist)
             log_kwargs = {"name": pod_name, "container": cs.name}
             if crashing:
                 try:
