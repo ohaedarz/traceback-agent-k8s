@@ -1,6 +1,6 @@
 [project]
 name = "traceback-agent-k8s"
-version = "0.1.0"
+version = "0.2.0"
 description = "Read-only Kubernetes diagnostic MCP server (kube-traceback)"
 requires-python = ">=3.12"
 dependencies = [
@@ -25,3 +25,8 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

@@ -14,6 +14,10 @@
       TRACEBACK_DEFAULT_NAMESPACE: "demo"
       TRACEBACK_LOG_TAIL_LINES: "40"
       KUBECONFIG: "/home/agent/.kube/config"
+      KEYCLOAK_CLIENT_ID: "mcp-kubetraceback"
+      KEYCLOAK_REQUIRED_SCOPE: "k8s:readonly"
+      KEYCLOAK_ISSUER_URL: "https://${KEYCLOAK_DOMAIN:?Set KEYCLOAK_DOMAIN}/realms/${KEYCLOAK_REALM:?Set KEYCLOAK_REALM}"
+      MCP_RESOURCE_URL: "https://${MCP_PUBLIC_DOMAIN:?Set MCP_PUBLIC_DOMAIN}/mcp"
 
     volumes:
       - type: bind

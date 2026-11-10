@@ -2,7 +2,7 @@
 
 from kubetraceback.tools import mcp
 
-from kubetraceback import k8s_client
+from kubetraceback import auth, k8s_client
 
 _MAX_RESULTS = 10
 
@@ -15,6 +15,8 @@ def find_pods_by_name(search_keyword: str, namespace: str = "default") -> str:
     """
     try:
         ns = namespace or k8s_client.default_namespace()
+        auth.check_namespace(ns)
+
         pods = k8s_client.get_core_api().list_namespaced_pod(namespace=ns).items
         # Normalize: lowercase and replace spaces with hyphens so that
         # "web app" matches pod names like "web-app-7f9d4b8c6-abcde".

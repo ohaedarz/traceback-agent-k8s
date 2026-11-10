@@ -1,4 +1,4 @@
-﻿"""MCP health / connectivity check tools."""
+"""MCP health / connectivity check tools."""
 
 import platform
 import time
@@ -6,7 +6,7 @@ import uuid
 
 from kubetraceback.tools import mcp
 
-from kubetraceback import k8s_client
+from kubetraceback import auth, k8s_client
 
 _START_TIME = time.monotonic()
 _INSTANCE_ID = uuid.uuid4().hex[:8]
@@ -40,6 +40,8 @@ def cluster_status(namespace: str = "default") -> str:
     """
     try:
         ns = namespace or k8s_client.default_namespace()
+        auth.check_namespace(ns)
+
         pods = k8s_client.get_core_api().list_namespaced_pod(namespace=ns).items
         return f"cluster reachable: {len(pods)} pod(s) in namespace '{ns}'."
     except Exception as e:

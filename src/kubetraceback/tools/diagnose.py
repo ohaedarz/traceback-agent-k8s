@@ -2,7 +2,7 @@
 
 from kubetraceback.tools import mcp
 
-from kubetraceback import k8s_client
+from kubetraceback import auth, k8s_client
 
 
 def _tail(text: str, n: int) -> str:
@@ -19,6 +19,8 @@ def diagnose_pod_crash(pod_name: str, namespace: str = "default") -> str:
     try:
         api = k8s_client.get_core_api()
         ns = namespace or k8s_client.default_namespace()
+        auth.check_namespace(ns)
+
         tail = k8s_client.log_tail_lines()
         pod = api.read_namespaced_pod(name=pod_name, namespace=ns)
         sections = [f"# {pod.metadata.name} ({pod.status.phase})"]
