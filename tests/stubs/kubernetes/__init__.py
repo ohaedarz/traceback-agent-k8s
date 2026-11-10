@@ -5,6 +5,9 @@ for the tool tests to run without network access. In a real environment the
 actual `kubernetes` distribution is used instead.
 """
 
+import os
+import importlib.util
+
 
 class ConfigException(Exception):
     pass
@@ -23,43 +26,14 @@ class _Config:
 config = _Config()
 
 
-class _Client:
-    class CoreV1Api:  # placeholder; tests replace it with a MagicMock
-        def __init__(self, *args, **kwargs):
-            raise RuntimeError("stub CoreV1Api should be mocked in tests")
-
-
-class _ClientNamespace:
-    """Namespace so `from kubernetes.client import models` works."""
-
-    CoreV1Api = _Client.CoreV1Api
-
-
-client = _ClientNamespace()
-
-
-def _model_factory(name):
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
-    cls = type(name, (), {"__init__": __init__})
-    return cls
-
-
-class _Models:
-    pass
-
-
-for _name in (
-    "V1Pod",
-    "V1ObjectMeta",
-    "V1PodStatus",
-    "V1ContainerStatus",
-    "V1ContainerState",
-    "V1ContainerStateWaiting",
-    "V1ContainerStateTerminated",
-):
-    setattr(_Models, _name, _model_factory(_name))
-
-models = _Models()
+# Load the stub `kubernetes.client` module (models + CoreV1Api placeholder) so
+# `from kubernetes.client import models` and `from kubernetes import client`
+# both work offline.
+_here = os.path.dirname(os.path.abspath(__file__))
+_client_spec = importlib.util.spec_from_file_location(
+    "kubernetes.client", os.path.join(_here, "client.py")
+)
+client = importlib.util.module_from_spec(_client_spec)
+import sys as _sys
+_sys.modules["kubernetes.client"] = client
+_client_spec.loader.exec_module(client)

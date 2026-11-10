@@ -23,4 +23,11 @@ def _create_server():
 mcp = _create_server()
 
 # Import tool modules to register their tools on `mcp`.
-from kubetraceback.tools import diagnose, health, pods  # noqa: E402,F401
+from kubetraceback.tools import (  # noqa: E402,F401
+    describe,
+    diagnose,
+    endpoints,
+    events,
+    health,
+    pods,
+)

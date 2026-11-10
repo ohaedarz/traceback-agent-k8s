@@ -40,6 +40,28 @@ The server must run in **any** deployment setting: local dev, CI, or a VPS/k8s e
   - Tail exactly `TRACEBACK_LOG_TAIL_LINES` (default 40) lines to prevent token bloat.
   - Return a compact Markdown summary: container, state, reason, exit code, then the log tail.
 
+### 3. `get_cluster_events(namespace: str = "default")`
+- **Purpose:** Cross-reference failing pods with cluster lifecycle events.
+- **Behavior:** List the most recent events (capped at 20), sorted newest-first, as a compact `reason [timestamp] kind/name: message` list. Messages are truncated to ~200 chars.
+
+### 4. `get_pod_events(pod_name: str, namespace: str = "default")`
+- **Purpose:** Narrow down WHY a specific pod is failing before pulling logs.
+- **Behavior:** Filter events by `involvedObject.name=<pod>,involvedObject.kind=Pod` (server-side field selector), newest-first, capped at 20. Surfaces OOMKilled, BackOff, FailedScheduling, image-pull and probe failures.
+
+### 5. `get_pod_describe(pod_name: str, namespace: str = "default")`
+- **Purpose:** Compact `kubectl describe pod` for stuck/pending pods.
+- **Behavior:** Phase, pod/host IP, conditions (most diagnostic for Unschedulable / probe failures), per-container image, ports, resource requests/limits, and liveness/readiness probe config. Optionally appends a metrics-server usage line when available (degrades silently when metrics-server is absent).
+
+### 6. `list_services(namespace: str = "default")`
+- **Purpose:** First step in "service exists but returns 503" debugging.
+- **Behavior:** Compact table of services with ports and pod selectors so the agent can compare the selector against actual pod labels.
+
+### 7. `get_service_endpoints(service: str, namespace: str = "default")`
+- **Purpose:** Prove whether a service has ready backends.
+- **Behavior:** Reports the service selector, ready endpoint count + pod names, any NOT-READY addresses, and an explicit `NO READY ENDPOINTS` flag (the classic 503/502 cause).
+
+- **Agent guideline:** Typical crash-debug flow is `find_pods_by_name` -> `get_pod_events` (or `get_cluster_events`) -> `diagnose_pod_crash` -> `get_pod_describe`. For "route returns 5xx" use `list_services` -> `get_service_endpoints`.
+
 ## Extension Pattern (new tools)
 
 Use this exact template for any new diagnostic tool:
@@ -94,6 +116,9 @@ src/
       __init__.py        # creates the mcp instance, imports tool modules
       pods.py            # find_pods_by_name
       diagnose.py        # diagnose_pod_crash
+      events.py          # get_cluster_events, get_pod_events
+      describe.py        # get_pod_describe
+      endpoints.py       # list_services, get_service_endpoints
 tests/
   conftest.py            # offline mock fixtures for kubernetes.client
   mock_k8s.py            # mock API response factories
