@@ -13,7 +13,8 @@ PKGS          := $(PYTHON) -m py_compile \
                  src/kubetraceback/__main__.py \
                  src/kubetraceback/mcp_server.py \
                  src/kubetraceback/fastmcp_compat.py \
-                 src/kubetraceback/k8s_client.py \
+                 src/kubetraceback/k8s_client.py 
+                 src/kubetraceback/config.py \
                  src/kubetraceback/tools/__init__.py \
                  src/kubetraceback/tools/pods.py \
                  src/kubetraceback/tools/diagnose.py

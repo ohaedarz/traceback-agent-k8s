@@ -1,15 +1,19 @@
 """Optional Keycloak OAuth2 (OIDC) authentication for the HTTP transport.
 
-Activated when ``KEYCLOAK_ISSUER_URL`` is set (the stdio transport stays
-unauthenticated - it is a local transport).
+Activated when KEYCLOAK_ISSUER_URL is configured at startup (the stdio
+transport stays unauthenticated - it is a local transport).
 
-- ``KeycloakTokenVerifier`` validates bearer JWTs (RS256) against the realm
-  JWKS endpoint (cached; refetched once on an unknown ``kid`` for key
-  rotation) and checks ``iss``, ``aud`` (the MCP client id) and ``exp``.
-- Namespace authorization is role based: Keycloak *client roles* on the MCP
-  client named ``ns:<namespace>`` grant read access to that namespace, and
-  ``ns:*`` grants every namespace. Realm roles with the same naming are
+- KeycloakTokenVerifier validates bearer JWTs (RS256) against the realm
+  JWKS endpoint (cached; refetched once on an unknown kid for key
+  rotation) and checks iss, aud (the MCP client id) and exp.
+- Namespace authorization is role based: Keycloak client roles on the MCP
+  client named ns:<namespace> grant read access to that namespace, and
+  ns:* grants every namespace. Realm roles with the same naming are
   honored as well. A user without a matching role has no access.
+
+All environment variables are read once, at startup, by
+kubetraceback.config (CODE_STYLES.md rule 2). This module only consults
+that configuration.
 """
 
 from __future__ import annotations
@@ -17,16 +21,15 @@ from __future__ import annotations
 import base64
 import json
 import logging
-import os
 import time
 from typing import Any, Callable
 
 from mcp.server.auth.provider import AccessToken
 
+from kubetraceback import config
+
 logger = logging.getLogger(__name__)
 
-DEFAULT_CLIENT_ID = "mcp-kubetraceback"
-DEFAULT_REQUIRED_SCOPE = "k8s:readonly"
 DEFAULT_NS_ROLE_PREFIX = "ns:"
 ALL_NAMESPACES = "*"
 _CLOCK_SKEW_SECONDS = 30
@@ -34,16 +37,6 @@ _CLOCK_SKEW_SECONDS = 30
 
 class NamespaceNotAllowed(Exception):
     """The authenticated user has no read access to a namespace."""
-
-
-def _env(name: str, default: str | None = None) -> str | None:
-    value = os.environ.get(name)
-    return value if value not in (None, "") else default
-
-
-def auth_enabled() -> bool:
-    """True when Keycloak auth is configured."""
-    return bool(os.environ.get("KEYCLOAK_ISSUER_URL"))
 
 
 def _b64url_decode(data: str) -> bytes:
@@ -61,14 +54,14 @@ def _jwks_public_key(jwk: dict[str, Any]):
 class KeycloakTokenVerifier:
     """Validates bearer JWTs issued by a Keycloak realm (RS256 + JWKS).
 
-    ``fetch_jwks`` is injectable for tests; by default it GETs the realm
-    ``protocol/openid-connect/certs`` endpoint.
+    fetch_jwks is injectable for tests; by default it GETs the realm
+    protocol/openid-connect/certs endpoint.
     """
 
     def __init__(
         self,
         issuer_url: str,
-        client_id: str = DEFAULT_CLIENT_ID,
+        client_id: str,
         fetch_jwks: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self.issuer_url = issuer_url.rstrip("/")
@@ -169,33 +162,29 @@ class KeycloakTokenVerifier:
 
 
 def build_auth_kwargs() -> dict[str, Any]:
-    """FastMCP constructor kwargs enabling Keycloak auth, or {} when disabled."""
-    if not auth_enabled():
+    """FastMCP constructor kwargs enabling Keycloak auth, or {} when disabled.
+
+    Requires kubetraceback.config.init() to have been called first.
+    """
+    if config.CONFIG is None or not config.CONFIG.keycloak_issuer_url:
         return {}
     try:
         from mcp.server.auth.settings import AuthSettings
     except ImportError:
         logger.warning("installed mcp SDK is too old for Keycloak auth; auth disabled")
         return {}
-    issuer_url = os.environ["KEYCLOAK_ISSUER_URL"]
-    client_id = _env("KEYCLOAK_CLIENT_ID", DEFAULT_CLIENT_ID)
-    resource_url = _env(
-        "MCP_RESOURCE_URL",
-        "http://{}:{}/mcp".format(
-            os.environ.get("TRACEBACK_MCP_HOST", "127.0.0.1"),
-            os.environ.get("TRACEBACK_MCP_PORT", "8765"),
-        ),
-    )
     settings = AuthSettings(
-        issuer_url=issuer_url,
-        resource_server_url=resource_url,
-        required_scopes=[_env("KEYCLOAK_REQUIRED_SCOPE", DEFAULT_REQUIRED_SCOPE)],
+        issuer_url=config.CONFIG.keycloak_issuer_url,
+        resource_server_url=config.CONFIG.mcp_resource_url,
+        required_scopes=[config.CONFIG.keycloak_required_scope],
         # The verifier already checks the token audience itself.
         validate_token_resource=False,
     )
     return {
         "auth": settings,
-        "token_verifier": KeycloakTokenVerifier(issuer_url, client_id),
+        "token_verifier": KeycloakTokenVerifier(
+            config.CONFIG.keycloak_issuer_url, config.CONFIG.keycloak_client_id
+        ),
     }
 
 
@@ -213,10 +202,10 @@ def allowed_namespaces(
 ) -> frozenset[str] | None:
     """Map token roles to granted namespaces.
 
-    Returns None when all namespaces are granted (``ns:*``), otherwise the
+    Returns None when all namespaces are granted (ns:*), otherwise the
     set of granted namespace names (possibly empty).
     """
-    prefix = _env("KEYCLOAK_NS_ROLE_PREFIX", DEFAULT_NS_ROLE_PREFIX)
+    prefix = config.CONFIG.keycloak_ns_role_prefix if config.CONFIG else DEFAULT_NS_ROLE_PREFIX
     roles: list[str] = []
     resource_access = claims.get("resource_access") or {}
     roles.extend((resource_access.get(client_id) or {}).get("roles") or [])
@@ -238,13 +227,12 @@ def check_namespace(namespace: str) -> None:
 
     A no-op when auth is disabled (stdio transport / no KEYCLOAK_ISSUER_URL).
     """
-    if not auth_enabled():
+    if config.CONFIG is None or not config.CONFIG.keycloak_issuer_url:
         return
     token = get_current_access_token()
     if token is None or not token.claims:
         raise NamespaceNotAllowed("authentication required: no valid access token in context")
-    client_id = _env("KEYCLOAK_CLIENT_ID", DEFAULT_CLIENT_ID)
-    allowed = allowed_namespaces(token.claims, client_id)
+    allowed = allowed_namespaces(token.claims, config.CONFIG.keycloak_client_id)
     if allowed is None or namespace in allowed:
         return
     username = token.claims.get("preferred_username") or token.subject or "unknown"

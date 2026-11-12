@@ -24,6 +24,7 @@ The server must run in **any** deployment setting: local dev, CI, or a VPS/k8s e
 - When running **outside** a cluster (local dev / VPS host): use `kubernetes.config.load_kube_config()` with `~/.kube/config`.
 - When running **inside** the cluster (this repo's `traceback-agent-k8s` deployment): use `kubernetes.config.load_incluster_config()` if `KUBECONFIG` is unset.
 - Lazy-load the client (first tool call), not at import time, so `main.py` can start without a reachable cluster.
+- **One config module** (CODE_STYLES.md): all environment variables are read exactly once in kubetraceback/config.py::init() at app start; no other module may read the environment. Missing required vars fail fast with ConfigError.
 
 ## Tool Schemas (active & target)
 

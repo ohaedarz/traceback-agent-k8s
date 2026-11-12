@@ -1,4 +1,5 @@
-"""Shared fixtures: a mocked CoreV1Api so tests run fully offline."""
+"""Shared fixtures: a mocked CoreV1Api and a config snapshot so tests run
+fully offline with no environment requirements."""
 
 from unittest import mock
 
@@ -10,7 +11,7 @@ import pytest
 
 
 def _use_stub_kubernetes_if_unavailable():
-    """Install a stub `kubernetes` module if the real one is not installed."""
+    """Install a stub kubernetes module if the real one is not installed."""
     try:
         import kubernetes  # noqa: F401
     except ImportError:
@@ -21,7 +22,7 @@ def _use_stub_kubernetes_if_unavailable():
         module = importlib.util.module_from_spec(spec)
         sys.modules["kubernetes"] = module
         spec.loader.exec_module(module)
-        # Register the client submodule so `from kubernetes.client import models` works.
+        # Register the client submodule so "from kubernetes.client import models" works.
         client_spec = importlib.util.spec_from_file_location(
             "kubernetes.client", os.path.join(stubs, "kubernetes", "client.py")
         )
@@ -33,7 +34,29 @@ def _use_stub_kubernetes_if_unavailable():
 
 _use_stub_kubernetes_if_unavailable()
 
-from kubetraceback import k8s_client  # noqa: E402
+from kubetraceback import config, k8s_client  # noqa: E402
+
+
+def _test_config(**overrides):
+    """A stdio/no-auth config snapshot; tests override fields as needed."""
+    base = dict(
+        transport="stdio",
+        default_namespace="default",
+        log_tail_lines=40,
+        kubeconfig=None,
+        in_cluster=None,
+        keycloak_issuer_url=None,
+    )
+    base.update(overrides)
+    return config._Config(base)
+
+
+@pytest.fixture(autouse=True)
+def app_config(monkeypatch):
+    """Every test starts with a stdio/no-auth config snapshot (CODE_STYLES.md:
+    config is loaded at init, tools only read the snapshot)."""
+    monkeypatch.setattr(config, "CONFIG", _test_config())
+    yield config.CONFIG
 
 
 @pytest.fixture(autouse=True)

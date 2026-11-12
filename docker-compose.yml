@@ -1,4 +1,4 @@
-﻿services:
+services:
   mcp:
     image: kube-traceback:ci
     pull_policy: never
@@ -11,6 +11,11 @@
       TRACEBACK_MCP_TRANSPORT: "http"
       TRACEBACK_MCP_HOST: "0.0.0.0"
       TRACEBACK_MCP_PORT: "8765"
+      # Allowed hosts/origins for the HTTP transport are deployment values:
+      # set TRACEBACK_MCP_ALLOWED_HOSTS / TRACEBACK_MCP_ALLOWED_ORIGINS in the
+      # host .env file (same place as KEYCLOAK_DOMAIN / MCP_PUBLIC_DOMAIN).
+      TRACEBACK_MCP_ALLOWED_HOSTS: "${TRACEBACK_MCP_ALLOWED_HOSTS:?Set TRACEBACK_MCP_ALLOWED_HOSTS}"
+      TRACEBACK_MCP_ALLOWED_ORIGINS: "${TRACEBACK_MCP_ALLOWED_ORIGINS:?Set TRACEBACK_MCP_ALLOWED_ORIGINS}"
       TRACEBACK_DEFAULT_NAMESPACE: "demo"
       TRACEBACK_LOG_TAIL_LINES: "40"
       KUBECONFIG: "/home/agent/.kube/config"

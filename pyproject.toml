@@ -1,6 +1,6 @@
 [project]
 name = "traceback-agent-k8s"
-version = "0.2.0"
+version = "0.2.1"
 description = "Read-only Kubernetes diagnostic MCP server (kube-traceback)"
 requires-python = ">=3.12"
 dependencies = [
@@ -14,7 +14,7 @@ dev = [
 ]
 
 [project.scripts]
-kubetraceback = "kubetraceback.mcp_server:run"
+kubetraceback = "kubetraceback.__main__:main"
 
 [build-system]
 requires = ["setuptools>=68"]

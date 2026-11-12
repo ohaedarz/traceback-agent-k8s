@@ -480,6 +480,22 @@ legacy kubeconfig the app might otherwise use, so this file is the only
 credential source. Remember that `environment:` overrides `env_file`. This
 fragment is not a complete Compose file.
 
+The compose file also requires the HTTP transport allow-lists, which are
+deployment values (never hardcoded). Set them in the host `env_file`
+(`.env`) next to `KEYCLOAK_DOMAIN` / `MCP_PUBLIC_DOMAIN`:
+
+```dotenv
+# Comma-separated host allow-lists for the MCP HTTP transport.
+# Hosts may carry a port; the `:*` suffix matches any port.
+TRACEBACK_MCP_ALLOWED_HOSTS="example.com, example.com:*, 127.0.0.1, 127.0.0.1:*, localhost, localhost:*"
+TRACEBACK_MCP_ALLOWED_ORIGINS="https://example.com, http://localhost:6274"
+```
+
+Replace the example values with the real public host(s) of this deployment.
+If a variable is missing, `docker compose up` fails fast with
+`Set TRACEBACK_MCP_ALLOWED_HOSTS` (or `..._ORIGINS`) instead of starting
+with an implicit allow-list.
+
 ## Step 7 -- First run and install the timer  *(run on: MCP host)*
 
 On the **MCP host**, run the refresh script once. It fetches the initial

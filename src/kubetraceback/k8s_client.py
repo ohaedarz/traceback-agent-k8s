@@ -1,15 +1,20 @@
 """Lazy Kubernetes client loader.
 
-- Outside a cluster: reads KUBECONFIG (default ~/.kube/config).
-- Inside a cluster (no KUBECONFIG set): uses in-cluster service account config.
+- Outside a cluster: reads the kubeconfig pointed to by KUBECONFIG
+  (falls back to the standard ~/.kube/config location when unset).
+- Inside a cluster (KUBERNETES_SERVICE_HOST present, no KUBECONFIG):
+  uses in-cluster service account config.
 
-The client is loaded lazily on first use so the server can start even when the
-cluster is unreachable.
+Both facts are captured once at startup in kubetraceback.config
+(CODE_STYLES.md rule 2); this module performs no environment reads.
+
+The API client is loaded lazily on first use so the server can start even
+when the cluster is unreachable.
 """
 
-import os
+from kubernetes import client, config as k8s_config
 
-from kubernetes import client, config
+from kubetraceback import config
 
 _core_api: client.CoreV1Api | None = None
 
@@ -18,25 +23,10 @@ def get_core_api() -> client.CoreV1Api:
     """Return a cached CoreV1Api, loading configuration on first call."""
     global _core_api
     if _core_api is None:
-        if os.environ.get("KUBECONFIG") or not _in_cluster():
-            config.load_kube_config()
+        if config.CONFIG.kubeconfig is None and config.CONFIG.in_cluster:
+            k8s_config.load_incluster_config()
         else:
-            config.load_incluster_config()
+            # When KUBECONFIG is unset, load_kube_config uses ~/.kube/config.
+            k8s_config.load_kube_config()
         _core_api = client.CoreV1Api()
     return _core_api
-
-
-def _in_cluster() -> bool:
-    """True when the standard in-cluster service-account token is present."""
-    return bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
-
-
-def default_namespace() -> str:
-    return os.environ.get("TRACEBACK_DEFAULT_NAMESPACE", "default")
-
-
-def log_tail_lines() -> int:
-    try:
-        return int(os.environ.get("TRACEBACK_LOG_TAIL_LINES", "40"))
-    except ValueError:
-        return 40

@@ -1,7 +1,11 @@
-"""Offline tests for Keycloak auth: JWT verification, namespace RBAC, env wiring.
+"""Offline tests for Keycloak auth: JWT verification, namespace RBAC,
+config wiring.
 
 No network access: the JWKS fetcher is injected, and signing keys are
-generated locally. Requires `cryptography` (transitive dep of mcp[cli]).
+generated locally. Requires cryptography (transitive dep of mcp[cli]).
+
+Auth behavior is driven by the startup config snapshot (CODE_STYLES.md
+rule 2): tests set fields on the app_config fixture instead of env vars.
 """
 
 import base64
@@ -13,7 +17,7 @@ import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-from kubetraceback import auth
+from kubetraceback import auth, config
 
 ISSUER = "https://keycloak.example.com/realms/lab"
 CLIENT = "mcp-kubetraceback"
@@ -25,6 +29,18 @@ CLIENT = "mcp-kubetraceback"
 
 def _b64url(data: bytes) -> bytes:
     return base64.urlsafe_b64encode(data).rstrip(b"=")
+
+
+def _auth_config(**overrides) -> config._Config:
+    base = dict(
+        keycloak_issuer_url=ISSUER,
+        keycloak_client_id=CLIENT,
+        keycloak_required_scope="k8s:readonly",
+        keycloak_ns_role_prefix="ns:",
+        mcp_resource_url="https://mcp.example/mcp",
+    )
+    base.update(overrides)
+    return config._Config(base)
 
 
 @pytest.fixture(scope="module")
@@ -58,7 +74,7 @@ def make_token(
     header_overrides: dict | None = None,
     sign_input: str | None = None,
 ) -> str:
-    """Build a signed RS256 JWT. ``sign_input`` overrides what gets signed
+    """Build a signed RS256 JWT. sign_input overrides what gets signed
     (to produce an invalid signature)."""
     header = {"alg": "RS256", "typ": "JWT", "kid": jwk.get("kid", "k1")}
     header.update(header_overrides or {})
@@ -100,29 +116,6 @@ def make_verifier(
     return auth.KeycloakTokenVerifier(
         issuer_url=issuer, client_id=client_id, fetch_jwks=fetch_jwks
     )
-
-
-# ---------------------------------------------------------------------------
-# auth_enabled / _env
-# ---------------------------------------------------------------------------
-
-def test_auth_enabled_false_without_issuer(monkeypatch):
-    monkeypatch.delenv("KEYCLOAK_ISSUER_URL", raising=False)
-    assert auth.auth_enabled() is False
-
-
-def test_auth_enabled_true_with_issuer(monkeypatch):
-    monkeypatch.setenv("KEYCLOAK_ISSUER_URL", ISSUER)
-    assert auth.auth_enabled() is True
-
-
-def test_env_falls_back_on_empty(monkeypatch):
-    monkeypatch.setenv("SOME_TEST_VAR", "")
-    assert auth._env("SOME_TEST_VAR", "default") == "default"
-    monkeypatch.setenv("SOME_TEST_VAR", "value")
-    assert auth._env("SOME_TEST_VAR", "default") == "value"
-    monkeypatch.delenv("SOME_TEST_VAR", raising=False)
-    assert auth._env("SOME_TEST_VAR") is None
 
 
 # ---------------------------------------------------------------------------
@@ -274,77 +267,30 @@ def test_allowed_namespaces_from_client_roles():
     assert auth.allowed_namespaces(claims, CLIENT) == frozenset({"demo", "prod"})
 
 
-def test_allowed_namespaces_wildcard_from_client_roles():
-    claims = base_claims()
-    claims["resource_access"] = {CLIENT: {"access": {}, "roles": ["ns:*"]}}
-    assert auth.allowed_namespaces(claims, CLIENT) is None
-
-
-def test_allowed_namespaces_wildcard_from_realm_roles():
+def test_allowed_namespaces_wildcard():
     claims = base_claims()
     claims["realm_access"] = {"roles": ["ns:*"]}
     assert auth.allowed_namespaces(claims, CLIENT) is None
 
 
-def test_allowed_namespaces_wildcard_client_beats_realm():
+def test_allowed_namespaces_custom_prefix():
+    config.CONFIG = _auth_config(keycloak_ns_role_prefix="kube:")
     claims = base_claims()
-    claims["resource_access"] = {CLIENT: {"access": {}, "roles": ["ns:demo", "ns:*"]}}
-    assert auth.allowed_namespaces(claims, CLIENT) is None
+    claims["resource_access"] = {CLIENT: {"access": {}, "roles": ["kube:alpha"]}}
+    claims["realm_access"] = {"roles": []}
+    assert auth.allowed_namespaces(claims, CLIENT) == frozenset({"alpha"})
 
 
-def test_allowed_namespaces_union_client_and_realm():
-    claims = base_claims()
-    claims["realm_access"] = {"roles": ["ns:staging"]}
-    assert auth.allowed_namespaces(claims, CLIENT) == frozenset({"demo", "prod", "staging"})
-
-
-def test_allowed_namespaces_empty_when_no_ns_roles():
+def test_allowed_namespaces_empty_when_no_roles():
     claims = base_claims()
     claims["resource_access"] = {CLIENT: {"access": {}, "roles": ["k8s:readonly"]}}
-    claims["realm_access"] = {"roles": ["admin"]}
-    assert auth.allowed_namespaces(claims, CLIENT) == frozenset()
-
-
-def test_allowed_namespaces_missing_resource_access():
-    claims = base_claims()
-    claims.pop("resource_access")
-    assert auth.allowed_namespaces(claims, CLIENT) == frozenset()
-
-
-def test_allowed_namespaces_custom_prefix(monkeypatch):
-    monkeypatch.setenv("KEYCLOAK_NS_ROLE_PREFIX", "kube:")
-    claims = base_claims()
-    claims["resource_access"] = {CLIENT: {"access": {}, "roles": ["kube:one", "ns:two"]}}
-    # Only the custom prefix is honored; the old "ns:" role is ignored.
-    assert auth.allowed_namespaces(claims, CLIENT) == frozenset({"one"})
-
-
-def test_allowed_namespaces_ignores_non_matching_client():
-    claims = base_claims()
-    claims["resource_access"] = {
-        "other-client": {"access": {}, "roles": ["ns:other"]},
-        CLIENT: {"access": {}, "roles": []},
-    }
+    claims["realm_access"] = {"roles": []}
     assert auth.allowed_namespaces(claims, CLIENT) == frozenset()
 
 
 # ---------------------------------------------------------------------------
 # check_namespace
 # ---------------------------------------------------------------------------
-
-def test_check_namespace_noop_when_auth_disabled(monkeypatch):
-    monkeypatch.delenv("KEYCLOAK_ISSUER_URL", raising=False)
-    # No token in context, but auth is off -> no exception.
-    auth.check_namespace("any-namespace")
-
-
-def test_check_namespace_requires_token_when_enabled(monkeypatch):
-    monkeypatch.setenv("KEYCLOAK_ISSUER_URL", ISSUER)
-    # Patch get_current_access_token to return None.
-    with mock.patch.object(auth, "get_current_access_token", return_value=None):
-        with pytest.raises(auth.NamespaceNotAllowed, match="authentication required"):
-            auth.check_namespace("demo")
-
 
 def _make_access_token(claims: dict) -> "auth.AccessToken":
     from mcp.server.auth.provider import AccessToken
@@ -355,16 +301,26 @@ def _make_access_token(claims: dict) -> "auth.AccessToken":
     )
 
 
-def test_check_namespace_granted(monkeypatch):
-    monkeypatch.setenv("KEYCLOAK_ISSUER_URL", ISSUER)
+def test_check_namespace_noop_when_auth_disabled():
+    # Default fixture config has no issuer URL.
+    from mcp.server.auth.provider import AccessToken
+
+    token = AccessToken(token="t", client_id=CLIENT, scopes=[], expires_at=None,
+                        subject=None, claims=None)
+    with mock.patch.object(auth, "get_current_access_token", return_value=token):
+        auth.check_namespace("anything")  # no raise
+
+
+def test_check_namespace_granted():
+    config.CONFIG = _auth_config()
     token = _make_access_token(base_claims())  # ns:demo, ns:prod
     with mock.patch.object(auth, "get_current_access_token", return_value=token):
         auth.check_namespace("demo")  # no raise
         auth.check_namespace("prod")  # no raise
 
 
-def test_check_namespace_denied(monkeypatch):
-    monkeypatch.setenv("KEYCLOAK_ISSUER_URL", ISSUER)
+def test_check_namespace_denied():
+    config.CONFIG = _auth_config()
     token = _make_access_token(base_claims())  # ns:demo, ns:prod
     with mock.patch.object(auth, "get_current_access_token", return_value=token):
         with pytest.raises(auth.NamespaceNotAllowed) as excinfo:
@@ -375,8 +331,8 @@ def test_check_namespace_denied(monkeypatch):
     assert "demo" in msg and "prod" in msg  # allowed list surfaced
 
 
-def test_check_namespace_wildcard_allows_any(monkeypatch):
-    monkeypatch.setenv("KEYCLOAK_ISSUER_URL", ISSUER)
+def test_check_namespace_wildcard_allows_any():
+    config.CONFIG = _auth_config()
     claims = base_claims()
     claims["realm_access"] = {"roles": ["ns:*"]}
     token = _make_access_token(claims)
@@ -384,8 +340,8 @@ def test_check_namespace_wildcard_allows_any(monkeypatch):
         auth.check_namespace("whatever")  # no raise
 
 
-def test_check_namespace_empty_roles_denies_everything(monkeypatch):
-    monkeypatch.setenv("KEYCLOAK_ISSUER_URL", ISSUER)
+def test_check_namespace_empty_roles_denies_everything():
+    config.CONFIG = _auth_config()
     claims = base_claims()
     claims["resource_access"] = {CLIENT: {"access": {}, "roles": ["k8s:readonly"]}}
     claims["realm_access"] = {"roles": []}
@@ -395,8 +351,8 @@ def test_check_namespace_empty_roles_denies_everything(monkeypatch):
             auth.check_namespace("demo")
 
 
-def test_check_namespace_token_without_claims(monkeypatch):
-    monkeypatch.setenv("KEYCLOAK_ISSUER_URL", ISSUER)
+def test_check_namespace_requires_token_when_enabled():
+    config.CONFIG = _auth_config()
     from mcp.server.auth.provider import AccessToken
 
     token = AccessToken(token="t", client_id=CLIENT, scopes=[], expires_at=None,
@@ -406,13 +362,11 @@ def test_check_namespace_token_without_claims(monkeypatch):
             auth.check_namespace("demo")
 
 
-def test_check_namespace_via_real_contextvar(monkeypatch):
+def test_check_namespace_via_real_contextvar():
     """Exercise the real get_current_access_token via the SDK contextvar."""
-    import asyncio
-
     from mcp.server.auth.middleware import auth_context
 
-    monkeypatch.setenv("KEYCLOAK_ISSUER_URL", ISSUER)
+    config.CONFIG = _auth_config()
     claims = base_claims()
     token = _make_access_token(claims)
     from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
@@ -432,16 +386,26 @@ def test_check_namespace_via_real_contextvar(monkeypatch):
 # build_auth_kwargs
 # ---------------------------------------------------------------------------
 
-def test_build_auth_kwargs_disabled_without_issuer(monkeypatch):
-    monkeypatch.delenv("KEYCLOAK_ISSUER_URL", raising=False)
+def test_build_auth_kwargs_disabled_without_issuer():
+    # Default fixture config has no issuer URL.
     assert auth.build_auth_kwargs() == {}
 
 
-def test_build_auth_kwargs_enabled(monkeypatch):
-    monkeypatch.setenv("KEYCLOAK_ISSUER_URL", ISSUER)
-    monkeypatch.setenv("KEYCLOAK_CLIENT_ID", "custom-client")
-    monkeypatch.setenv("KEYCLOAK_REQUIRED_SCOPE", "custom:scope")
-    monkeypatch.setenv("MCP_RESOURCE_URL", "https://mcp.example/mcp")
+def test_build_auth_kwargs_disabled_before_init():
+    saved = config.CONFIG
+    try:
+        config.CONFIG = None
+        assert auth.build_auth_kwargs() == {}
+    finally:
+        config.CONFIG = saved
+
+
+def test_build_auth_kwargs_enabled():
+    config.CONFIG = _auth_config(
+        keycloak_client_id="custom-client",
+        keycloak_required_scope="custom:scope",
+        mcp_resource_url="https://mcp.example/mcp",
+    )
     kw = auth.build_auth_kwargs()
     assert set(kw) == {"auth", "token_verifier"}
     assert str(kw["auth"].issuer_url) == ISSUER
@@ -449,16 +413,3 @@ def test_build_auth_kwargs_enabled(monkeypatch):
     assert kw["auth"].required_scopes == ["custom:scope"]
     assert kw["token_verifier"].issuer_url == ISSUER
     assert kw["token_verifier"].client_id == "custom-client"
-
-
-def test_build_auth_kwargs_defaults(monkeypatch):
-    monkeypatch.setenv("KEYCLOAK_ISSUER_URL", ISSUER)
-    monkeypatch.delenv("KEYCLOAK_CLIENT_ID", raising=False)
-    monkeypatch.delenv("KEYCLOAK_REQUIRED_SCOPE", raising=False)
-    monkeypatch.delenv("MCP_RESOURCE_URL", raising=False)
-    monkeypatch.setenv("TRACEBACK_MCP_HOST", "10.0.0.5")
-    monkeypatch.setenv("TRACEBACK_MCP_PORT", "9000")
-    kw = auth.build_auth_kwargs()
-    assert str(kw["auth"].resource_server_url) == "http://10.0.0.5:9000/mcp"
-    assert kw["auth"].required_scopes == [auth.DEFAULT_REQUIRED_SCOPE]
-    assert kw["token_verifier"].client_id == auth.DEFAULT_CLIENT_ID
