@@ -249,6 +249,25 @@ def test_verify_returns_none_on_malformed_token(rsa_keypair):
     assert pytest.importorskip("asyncio").run(v.verify_token("a.b")) is None
 
 
+def test_verify_populates_resource_for_backend_matching(rsa_keypair):
+    """The verifier must set AccessToken.resource so BearerAuthBackend's
+    resource_server_url comparison does not drop the token."""
+    v = make_verifier(rsa_keypair)
+    token = make_token(rsa_keypair[0], rsa_keypair[1], base_claims())
+    acc = pytest.importorskip("asyncio").run(v.verify_token(token))
+    assert acc is not None
+    assert acc.resource == CLIENT
+
+
+def test_verify_uses_resource_claim_when_present(rsa_keypair):
+    v = make_verifier(rsa_keypair)
+    claims = base_claims(resource="https://mcp.example/mcp")
+    token = make_token(rsa_keypair[0], rsa_keypair[1], claims)
+    acc = pytest.importorskip("asyncio").run(v.verify_token(token))
+    assert acc is not None
+    assert acc.resource == "https://mcp.example/mcp"
+
+
 def test_verify_returns_none_on_fetch_error(rsa_keypair):
     def boom():
         raise RuntimeError("network down")

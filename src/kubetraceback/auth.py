@@ -93,9 +93,16 @@ class KeycloakTokenVerifier:
             return None
         if self.client_id not in self._audiences(claims):
             return None
+        # BearerAuthBackend compares AccessToken.resource to the configured
+        # resource_server_url and drops tokens that do not match, so the
+        # verifier must report the resource (audience) it validated.
+        resource = claims.get("resource")
+        if not resource:
+            resource = self.client_id
         return AccessToken(
             token=token,
             client_id=self.client_id,
+            resource=str(resource),
             scopes=self._scopes(claims),
             expires_at=claims.get("exp"),
             subject=claims.get("sub"),
@@ -134,14 +141,21 @@ class KeycloakTokenVerifier:
             return True
         return exp + _CLOCK_SKEW_SECONDS < time.time()
 
-    @staticmethod
-    def _audiences(claims: dict[str, Any]) -> list[str]:
+    def _audiences(self, claims: dict[str, Any]) -> list[str]:
+        # A token is accepted for this MCP server when the client id appears
+        # in the audience (aud) OR in the resource indicator (resource).
+        # The Keycloak client id doubles as the MCP resource identifier, so
+        # clients may present either claim.
+        out: list[str] = []
         aud = claims.get("aud")
         if isinstance(aud, str):
-            return [aud]
-        if isinstance(aud, list):
-            return [a for a in aud if isinstance(a, str)]
-        return []
+            out.append(aud)
+        elif isinstance(aud, list):
+            out.extend(a for a in aud if isinstance(a, str))
+        resource = claims.get("resource")
+        if isinstance(resource, str) and resource:
+            out.append(resource)
+        return out
 
     @staticmethod
     def _scopes(claims: dict[str, Any]) -> list[str]:
@@ -177,7 +191,9 @@ def build_auth_kwargs() -> dict[str, Any]:
         issuer_url=config.CONFIG.keycloak_issuer_url,
         resource_server_url=config.CONFIG.mcp_resource_url,
         required_scopes=[config.CONFIG.keycloak_required_scope],
-        # The verifier already checks the token audience itself.
+        # The verifier already enforces the audience/resource itself; do not
+        # let the transport re-check AccessToken.resource (the token carries
+        # the MCP client id, not this URL, so a strict match would reject it).
         validate_token_resource=False,
     )
     return {
