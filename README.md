@@ -258,7 +258,7 @@ see `No module named 'mcp'` or `No module named 'kubernetes'`, you are running
 # macOS / Linux
 .venv/bin/python -m pytest
 ```
-```
+
 
 If the `kubernetes` package is not installed, `tests/conftest.py` automatically
 installs a minimal stub from `tests/stubs/kubernetes/` so the test suite can
