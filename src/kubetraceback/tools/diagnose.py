@@ -1,8 +1,7 @@
 """Crash diagnosis: container lifecycle data + pre-crash log tails."""
 
-from kubetraceback.tools import mcp
-
 from kubetraceback import auth, config, k8s_client
+from kubetraceback.tools import mcp
 
 
 def _restart_history(cs) -> str | None:
@@ -45,7 +44,10 @@ def diagnose_pod_crash(pod_name: str, namespace: str = "default") -> str:
         if not container_statuses:
             sections.append("No container statuses reported.")
         crashing = pod.status.phase == "CrashLoopBackOff" or any(
-            (cs.state.waiting is not None and cs.state.waiting.reason == "CrashLoopBackOff")
+            (
+                cs.state.waiting is not None
+                and cs.state.waiting.reason == "CrashLoopBackOff"
+            )
             for cs in container_statuses
         )
         for cs in container_statuses:
@@ -78,9 +80,7 @@ def diagnose_pod_crash(pod_name: str, namespace: str = "default") -> str:
                     )
                     sections.append(f"### Pre-crash logs (tail {tail})")
                 except Exception:
-                    logs = api.read_namespaced_pod_log(
-                        namespace=ns, **log_kwargs
-                    )
+                    logs = api.read_namespaced_pod_log(namespace=ns, **log_kwargs)
                     sections.append(f"### Current logs (tail {tail})")
             else:
                 logs = api.read_namespaced_pod_log(namespace=ns, **log_kwargs)

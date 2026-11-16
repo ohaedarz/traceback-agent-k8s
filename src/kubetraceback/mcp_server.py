@@ -6,9 +6,9 @@ allow-lists for the HTTP transport come from configuration, never from
 hardcoded values (CODE_STYLES.md rules 1-2).
 """
 
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
 from starlette.responses import JSONResponse
-from mcp.server.transport_security import TransportSecuritySettings
 
 from kubetraceback import config
 from kubetraceback.tools import mcp
@@ -21,7 +21,9 @@ async def health(request: Request) -> JSONResponse:
 
 def run() -> None:
     if config.CONFIG is None:
-        raise RuntimeError("kubetraceback.config.init() must run before mcp_server.run()")
+        raise RuntimeError(
+            "kubetraceback.config.init() must run before mcp_server.run()"
+        )
 
     if config.CONFIG.transport == "http":
         mcp.settings.transport_security = TransportSecuritySettings(

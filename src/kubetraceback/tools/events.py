@@ -1,8 +1,7 @@
 """Cluster and pod event retrieval (read-only)."""
 
-from kubetraceback.tools import mcp
-
 from kubetraceback import auth, k8s_client
+from kubetraceback.tools import mcp
 
 _MAX_EVENTS = 20
 _MAX_MESSAGE_CHARS = 200
@@ -35,16 +34,14 @@ def get_cluster_events(namespace: str = "default") -> str:
 
         events = (
             k8s_client.get_core_api()
-            .list_namespaced_event(
-                namespace=ns, limit=_MAX_EVENTS, _continue=None
-            )
+            .list_namespaced_event(namespace=ns, limit=_MAX_EVENTS, _continue=None)
             .items
         )
         if not events:
             return f"No recent events in namespace '{ns}'."
         events = sorted(
             events,
-            key=lambda e: (e.last_timestamp or e.event_time or ""),
+            key=lambda e: e.last_timestamp or e.event_time or "",
             reverse=True,
         )
         sections = [f"# Events in '{ns}' ({len(events)} most recent)"]
@@ -78,7 +75,7 @@ def get_pod_events(pod_name: str, namespace: str = "default") -> str:
             return f"No recent events for pod '{pod_name}' in namespace '{ns}'."
         events = sorted(
             events,
-            key=lambda e: (e.last_timestamp or e.event_time or ""),
+            key=lambda e: e.last_timestamp or e.event_time or "",
             reverse=True,
         )
         sections = [f"# Events for pod '{pod_name}' ({len(events)} most recent)"]

@@ -14,7 +14,9 @@ def _create_server():
     server_class = get_mcp_class()
     try:
         # auth kwargs enable Keycloak auth when KEYCLOAK_ISSUER_URL is set.
-        return server_class("kube-traceback", instructions=_INSTRUCTIONS, **auth.build_auth_kwargs())
+        return server_class(
+            "kube-traceback", instructions=_INSTRUCTIONS, **auth.build_auth_kwargs()
+        )
     except TypeError:
         # mcp 2.x MCPServer may not accept auth kwargs.
         return server_class("kube-traceback", instructions=_INSTRUCTIONS)

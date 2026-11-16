@@ -31,11 +31,16 @@ def _required(name: str) -> str:
     if value is None or value == "":
         raise ConfigError(f"environment variable {name} is required but not set")
     return value
+
+
 def _int_env(raw: str) -> int:
     try:
         return int(raw)
     except ValueError as err:
-        raise ConfigError(f"TRACEBACK_LOG_TAIL_LINES must be an integer: {err}") from None
+        raise ConfigError(
+            f"TRACEBACK_LOG_TAIL_LINES must be an integer: {err}"
+        ) from None
+
 
 def _list(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
@@ -56,7 +61,9 @@ def _load() -> dict:
 
     transport = (env.get("TRACEBACK_MCP_TRANSPORT") or "stdio").strip().lower()
     if transport not in ("stdio", "http"):
-        raise ConfigError(f"TRACEBACK_MCP_TRANSPORT must be 'stdio' or 'http', got {transport!r}")
+        raise ConfigError(
+            f"TRACEBACK_MCP_TRANSPORT must be 'stdio' or 'http', got {transport!r}"
+        )
 
     settings: dict = {
         "transport": transport,

@@ -12,7 +12,8 @@ The API client is loaded lazily on first use so the server can start even
 when the cluster is unreachable.
 """
 
-from kubernetes import client, config as k8s_config
+from kubernetes import client
+from kubernetes import config as k8s_config
 
 from kubetraceback import config
 

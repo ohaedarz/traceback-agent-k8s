@@ -53,12 +53,20 @@ def make_pod(
 
     return _model("V1Pod")(
         metadata=metadata,
-        status=_model("V1PodStatus")(phase=phase, container_statuses=[container_status]),
+        status=_model("V1PodStatus")(
+            phase=phase, container_statuses=[container_status]
+        ),
     )
 
 
-def make_rich_pod(name, phase="Pending", conditions=None, image="example/app:latest",
-                  cpu_limit="500m", mem_limit="256Mi"):
+def make_rich_pod(
+    name,
+    phase="Pending",
+    conditions=None,
+    image="example/app:latest",
+    cpu_limit="500m",
+    mem_limit="256Mi",
+):
     metadata = _model("V1ObjectMeta")(name=name, labels={"app": name})
 
     http_probe = _model("V1Probe")(
@@ -98,9 +106,15 @@ def make_condition(cond_type, status, reason="", message=""):
     )
 
 
-def make_event(name="evt", kind="Pod", target="some-pod", reason="BackOff",
-               message="back-off restarting failed container", count=1,
-               last_timestamp="2026-11-10T10:00:00Z"):
+def make_event(
+    name="evt",
+    kind="Pod",
+    target="some-pod",
+    reason="BackOff",
+    message="back-off restarting failed container",
+    count=1,
+    last_timestamp="2026-11-10T10:00:00Z",
+):
     return _model("V1Event")(
         metadata=_model("V1ObjectMeta")(name=name),
         involved_object=_model("V1ObjectReference")(kind=kind, name=target),

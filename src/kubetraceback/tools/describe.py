@@ -1,8 +1,7 @@
 """Pod describe: conditions, containers, probes, resources, volumes (read-only)."""
 
-from kubetraceback.tools import mcp
-
 from kubetraceback import auth, k8s_client
+from kubetraceback.tools import mcp
 
 _MAX_CONDITIONS = 10
 
@@ -11,9 +10,14 @@ def _fmt_resources(resources) -> str:
     if resources is None:
         return "n/a"
     parts = []
-    for section, attrs in (("requests", resources.requests), ("limits", resources.limits)):
+    for section, attrs in (
+        ("requests", resources.requests),
+        ("limits", resources.limits),
+    ):
         if attrs:
-            parts.append(f"{section}: " + ", ".join(f"{k}={v}" for k, v in attrs.items()))
+            parts.append(
+                f"{section}: " + ", ".join(f"{k}={v}" for k, v in attrs.items())
+            )
     return "; ".join(parts) or "n/a"
 
 
@@ -42,9 +46,7 @@ def _usage_line(pod_name: str, ns: str) -> str | None:
     try:
         from kubernetes import client
 
-        metrics = client.MetricsApi().get_namespaced_pod(
-            name=pod_name, namespace=ns
-        )
+        metrics = client.MetricsApi().get_namespaced_pod(name=pod_name, namespace=ns)
         if not metrics or not metrics.containers:
             return None
         parts = []
@@ -59,7 +61,7 @@ def _usage_line(pod_name: str, ns: str) -> str | None:
                 parts.append(f"{c.name}: {', '.join(bits)}")
         if not parts:
             return None
-        return f"- usage (metrics-server): " + "; ".join(parts)
+        return "- usage (metrics-server): " + "; ".join(parts)
     except Exception:
         return None
 

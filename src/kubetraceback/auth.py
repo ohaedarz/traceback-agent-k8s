@@ -213,15 +213,17 @@ def get_current_access_token() -> AccessToken | None:
     return get_access_token()
 
 
-def allowed_namespaces(
-    claims: dict[str, Any], client_id: str
-) -> frozenset[str] | None:
+def allowed_namespaces(claims: dict[str, Any], client_id: str) -> frozenset[str] | None:
     """Map token roles to granted namespaces.
 
     Returns None when all namespaces are granted (ns:*), otherwise the
     set of granted namespace names (possibly empty).
     """
-    prefix = config.CONFIG.keycloak_ns_role_prefix if config.CONFIG else DEFAULT_NS_ROLE_PREFIX
+    prefix = (
+        config.CONFIG.keycloak_ns_role_prefix
+        if config.CONFIG
+        else DEFAULT_NS_ROLE_PREFIX
+    )
     roles: list[str] = []
     resource_access = claims.get("resource_access") or {}
     roles.extend((resource_access.get(client_id) or {}).get("roles") or [])
@@ -230,7 +232,7 @@ def allowed_namespaces(
     for role in roles:
         if not role.startswith(prefix):
             continue
-        namespace = role[len(prefix):]
+        namespace = role[len(prefix) :]
         if namespace == ALL_NAMESPACES:
             return None
         if namespace:
@@ -247,7 +249,9 @@ def check_namespace(namespace: str) -> None:
         return
     token = get_current_access_token()
     if token is None or not token.claims:
-        raise NamespaceNotAllowed("authentication required: no valid access token in context")
+        raise NamespaceNotAllowed(
+            "authentication required: no valid access token in context"
+        )
     allowed = allowed_namespaces(token.claims, config.CONFIG.keycloak_client_id)
     if allowed is None or namespace in allowed:
         return

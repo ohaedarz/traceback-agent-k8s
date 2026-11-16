@@ -4,9 +4,8 @@ import platform
 import time
 import uuid
 
-from kubetraceback.tools import mcp
-
 from kubetraceback import auth, k8s_client
+from kubetraceback.tools import mcp
 
 _START_TIME = time.monotonic()
 _INSTANCE_ID = uuid.uuid4().hex[:8]

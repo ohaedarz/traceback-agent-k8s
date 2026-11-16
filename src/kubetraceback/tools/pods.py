@@ -1,8 +1,7 @@
 """Fuzzy pod name search."""
 
-from kubetraceback.tools import mcp
-
 from kubetraceback import auth, k8s_client
+from kubetraceback.tools import mcp
 
 _MAX_RESULTS = 10
 
@@ -25,15 +24,12 @@ def find_pods_by_name(search_keyword: str, namespace: str = "default") -> str:
             p
             for p in pods
             if keyword in p.metadata.name.lower()
-            or keyword
-            in "-".join((p.metadata.labels or {}).values()).lower()
+            or keyword in "-".join((p.metadata.labels or {}).values()).lower()
         ][:_MAX_RESULTS]
         if not matches:
             return f"No pods in namespace '{ns}' match '{search_keyword}'."
-        lines = [f"| Pod | Phase |", "|---|---|"]
-        lines += [
-            f"| {p.metadata.name} | {p.status.phase} |" for p in matches
-        ]
+        lines = ["| Pod | Phase |", "|---|---|"]
+        lines += [f"| {p.metadata.name} | {p.status.phase} |" for p in matches]
         return "\n".join(lines)
     except Exception as e:
         return f"Failed to list pods in namespace '{namespace}': {e}"

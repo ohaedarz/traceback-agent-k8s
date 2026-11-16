@@ -5,7 +5,6 @@ import pytest
 
 from kubetraceback import config
 
-
 AUTH_ENV = {
     "KEYCLOAK_ISSUER_URL": "https://keycloak.example/realms/lab",
     "KEYCLOAK_CLIENT_ID": "mcp-kubetraceback",

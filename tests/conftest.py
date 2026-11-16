@@ -1,11 +1,10 @@
 """Shared fixtures: a mocked CoreV1Api and a config snapshot so tests run
 fully offline with no environment requirements."""
 
-from unittest import mock
-
 import importlib.util
 import os
 import sys
+from unittest import mock
 
 import pytest
 

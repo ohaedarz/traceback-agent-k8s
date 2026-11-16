@@ -1,8 +1,7 @@
 """Service endpoint inspection (read-only): why a service has no backends."""
 
-from kubetraceback.tools import mcp
-
 from kubetraceback import auth, k8s_client
+from kubetraceback.tools import mcp
 
 _MAX_ENDPOINTS = 20
 
@@ -10,11 +9,14 @@ _MAX_ENDPOINTS = 20
 def _service_table(services, ns: str) -> str:
     lines = ["| Service | Port(s) | Selector |", "|---|---|---|"]
     for svc in services:
-        ports = ", ".join(
-            f"{p.name or '?'}:{p.port}"
-            for p in (svc.spec.ports or [])
-        ) or "n/a"
-        selector = ", ".join(f"{k}={v}" for k, v in (svc.spec.selector or {}).items()) or "None (no selector)"
+        ports = (
+            ", ".join(f"{p.name or '?'}:{p.port}" for p in (svc.spec.ports or []))
+            or "n/a"
+        )
+        selector = (
+            ", ".join(f"{k}={v}" for k, v in (svc.spec.selector or {}).items())
+            or "None (no selector)"
+        )
         lines.append(f"| {svc.metadata.name} | {ports} | {selector} |")
     return "\n".join(lines)
 
@@ -30,9 +32,7 @@ def list_services(namespace: str = "default") -> str:
         ns = namespace or k8s_client.default_namespace()
         auth.check_namespace(ns)
 
-        services = (
-            k8s_client.get_core_api().list_namespaced_service(namespace=ns).items
-        )
+        services = k8s_client.get_core_api().list_namespaced_service(namespace=ns).items
         if not services:
             return f"No services in namespace '{ns}'."
         return f"# Services in '{ns}'\n\n{_service_table(services, ns)}"
@@ -53,9 +53,10 @@ def get_service_endpoints(service: str, namespace: str = "default") -> str:
         auth.check_namespace(ns)
 
         svc = api.read_namespaced_service(name=service, namespace=ns)
-        selector = ", ".join(
-            f"{k}={v}" for k, v in (svc.spec.selector or {}).items()
-        ) or "None (no selector)"
+        selector = (
+            ", ".join(f"{k}={v}" for k, v in (svc.spec.selector or {}).items())
+            or "None (no selector)"
+        )
         sections = [
             f"# Service '{service}' in '{ns}'",
             f"- selector: {selector}",

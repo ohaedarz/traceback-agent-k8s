@@ -5,8 +5,9 @@ for the tool tests to run without network access. In a real environment the
 actual `kubernetes` distribution is used instead.
 """
 
-import os
 import importlib.util
+import os
+import sys as _sys
 
 
 class ConfigException(Exception):
@@ -34,6 +35,5 @@ _client_spec = importlib.util.spec_from_file_location(
     "kubernetes.client", os.path.join(_here, "client.py")
 )
 client = importlib.util.module_from_spec(_client_spec)
-import sys as _sys
 _sys.modules["kubernetes.client"] = client
 _client_spec.loader.exec_module(client)

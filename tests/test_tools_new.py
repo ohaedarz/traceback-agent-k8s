@@ -3,16 +3,18 @@
 from kubetraceback.tools import describe, diagnose, endpoints, events
 from tests import mock_k8s
 
-
 # ---------------------------------------------------------------------------
 # get_cluster_events
 # ---------------------------------------------------------------------------
 
+
 def test_cluster_events_lists_recent(mock_k8s_api):
-    e1 = mock_k8s.make_event(reason="BackOff", target="p1", count=5,
-                             last_timestamp="2026-11-10T10:00:00Z")
-    e2 = mock_k8s.make_event(reason="Pulled", target="p1",
-                             last_timestamp="2026-11-10T09:00:00Z")
+    e1 = mock_k8s.make_event(
+        reason="BackOff", target="p1", count=5, last_timestamp="2026-11-10T10:00:00Z"
+    )
+    e2 = mock_k8s.make_event(
+        reason="Pulled", target="p1", last_timestamp="2026-11-10T09:00:00Z"
+    )
     mock_k8s_api.list_namespaced_event.return_value = type(
         "R", (), {"items": [e2, e1]}
     )()
@@ -43,7 +45,7 @@ def test_cluster_events_caps_at_20(mock_k8s_api):
         for i in range(50)
     ]
     mock_k8s_api.list_namespaced_event.return_value = type("R", (), {"items": items})()
-    result = events.get_cluster_events(namespace="default")
+    events.get_cluster_events(namespace="default")
     # request is limited server-side; assert we asked for limit=20
     assert mock_k8s_api.list_namespaced_event.call_args.kwargs.get("limit") == 20
 
@@ -51,6 +53,7 @@ def test_cluster_events_caps_at_20(mock_k8s_api):
 # ---------------------------------------------------------------------------
 # get_pod_events
 # ---------------------------------------------------------------------------
+
 
 def test_pod_events_field_selector(mock_k8s_api):
     e = mock_k8s.make_event(reason="OOMKilling", target="my-pod")
@@ -78,9 +81,12 @@ def test_pod_events_error_returns_string(mock_k8s_api):
 # list_services
 # ---------------------------------------------------------------------------
 
+
 def test_list_services_table(mock_k8s_api):
     svc = mock_k8s.make_service(name="web", selector={"app": "web"})
-    mock_k8s_api.list_namespaced_service.return_value = type("R", (), {"items": [svc]})()
+    mock_k8s_api.list_namespaced_service.return_value = type(
+        "R", (), {"items": [svc]}
+    )()
     result = endpoints.list_services(namespace="default")
     assert "# Services in 'default'" in result
     assert "| web |" in result
@@ -90,7 +96,9 @@ def test_list_services_table(mock_k8s_api):
 
 def test_list_services_no_selector(mock_k8s_api):
     svc = mock_k8s.make_service(name="ext", selector={})
-    mock_k8s_api.list_namespaced_service.return_value = type("R", (), {"items": [svc]})()
+    mock_k8s_api.list_namespaced_service.return_value = type(
+        "R", (), {"items": [svc]}
+    )()
     result = endpoints.list_services(namespace="default")
     assert "None (no selector)" in result
 
@@ -111,6 +119,7 @@ def test_list_services_error_returns_string(mock_k8s_api):
 # get_service_endpoints
 # ---------------------------------------------------------------------------
 
+
 def test_service_endpoints_ready(mock_k8s_api):
     mock_k8s_api.read_namespaced_service.return_value = mock_k8s.make_service(
         name="web", selector={"app": "web"}
@@ -125,7 +134,9 @@ def test_service_endpoints_ready(mock_k8s_api):
 
 
 def test_service_endpoints_not_ready_listed(mock_k8s_api):
-    mock_k8s_api.read_namespaced_service.return_value = mock_k8s.make_service(name="web")
+    mock_k8s_api.read_namespaced_service.return_value = mock_k8s.make_service(
+        name="web"
+    )
     mock_k8s_api.read_namespaced_endpoints.return_value = mock_k8s.make_endpoints(
         name="web", ready=[], not_ready=[("web-abc", "10.42.0.5")]
     )
@@ -135,8 +146,12 @@ def test_service_endpoints_not_ready_listed(mock_k8s_api):
 
 
 def test_service_endpoints_zero_flagged(mock_k8s_api):
-    mock_k8s_api.read_namespaced_service.return_value = mock_k8s.make_service(name="web")
-    mock_k8s_api.read_namespaced_endpoints.return_value = mock_k8s.make_endpoints(name="web")
+    mock_k8s_api.read_namespaced_service.return_value = mock_k8s.make_service(
+        name="web"
+    )
+    mock_k8s_api.read_namespaced_endpoints.return_value = mock_k8s.make_endpoints(
+        name="web"
+    )
     result = endpoints.get_service_endpoints("web", namespace="default")
     assert "NO READY ENDPOINTS" in result
     assert "ready endpoints: 0" in result
@@ -152,13 +167,18 @@ def test_service_endpoints_error_returns_string(mock_k8s_api):
 # get_pod_describe
 # ---------------------------------------------------------------------------
 
+
 def test_pod_describe_shows_conditions_and_containers(mock_k8s_api):
     pod = mock_k8s.make_rich_pod(
         "stuck-pod",
         phase="Pending",
         conditions=[
-            mock_k8s.make_condition("PodScheduled", "False", "Unschedulable",
-                                    "0/3 nodes available: 3 Insufficient cpu"),
+            mock_k8s.make_condition(
+                "PodScheduled",
+                "False",
+                "Unschedulable",
+                "0/3 nodes available: 3 Insufficient cpu",
+            ),
         ],
     )
     mock_k8s_api.read_namespaced_pod.return_value = pod
@@ -191,13 +211,17 @@ def test_pod_describe_error_returns_string(mock_k8s_api):
 # diagnose_pod_crash: restart history line
 # ---------------------------------------------------------------------------
 
+
 def test_diagnose_includes_last_termination(mock_k8s_api):
     from kubernetes.client import models as m
 
     last_term = m.V1ContainerStateTerminated(exit_code=137, reason="OOMKilled")
     last_state = m.V1ContainerState(terminated=last_term)
     pod = mock_k8s.make_pod(
-        "oom-pod", phase="CrashLoopBackOff", restarts=3, waiting_reason="CrashLoopBackOff"
+        "oom-pod",
+        phase="CrashLoopBackOff",
+        restarts=3,
+        waiting_reason="CrashLoopBackOff",
     )
     pod.status.container_statuses[0].last_state = last_state
     mock_k8s_api.read_namespaced_pod.return_value = pod

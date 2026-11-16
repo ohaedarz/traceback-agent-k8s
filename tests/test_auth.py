@@ -27,6 +27,7 @@ CLIENT = "mcp-kubetraceback"
 # helpers
 # ---------------------------------------------------------------------------
 
+
 def _b64url(data: bytes) -> bytes:
     return base64.urlsafe_b64encode(data).rstrip(b"=")
 
@@ -78,8 +79,10 @@ def make_token(
     (to produce an invalid signature)."""
     header = {"alg": "RS256", "typ": "JWT", "kid": jwk.get("kid", "k1")}
     header.update(header_overrides or {})
-    payload = _b64url(json.dumps(header).encode()) + b"." + _b64url(
-        json.dumps(claims).encode()
+    payload = (
+        _b64url(json.dumps(header).encode())
+        + b"."
+        + _b64url(json.dumps(claims).encode())
     )
     sig_input = sign_input if sign_input is not None else payload.decode()
     sig = signing_key.sign(sig_input.encode(), padding.PKCS1v15(), hashes.SHA256())
@@ -112,7 +115,10 @@ def make_verifier(
 ) -> auth.KeycloakTokenVerifier:
     key, jwk = rsa_keypair
     if fetch_jwks is None:
-        fetch_jwks = lambda: {"keys": [jwk]}
+
+        def fetch_jwks() -> dict:
+            return {"keys": [jwk]}
+
     return auth.KeycloakTokenVerifier(
         issuer_url=issuer, client_id=client_id, fetch_jwks=fetch_jwks
     )
@@ -121,6 +127,7 @@ def make_verifier(
 # ---------------------------------------------------------------------------
 # KeycloakTokenVerifier.verify_token
 # ---------------------------------------------------------------------------
+
 
 def test_verify_valid_token(rsa_keypair):
     v = make_verifier(rsa_keypair)
@@ -142,8 +149,10 @@ def test_verify_rejects_bad_signature(rsa_keypair):
     other = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     claims = base_claims()
     header = {"alg": "RS256", "typ": "JWT", "kid": jwk["kid"]}
-    payload = _b64url(json.dumps(header).encode()) + b"." + _b64url(
-        json.dumps(claims).encode()
+    payload = (
+        _b64url(json.dumps(header).encode())
+        + b"."
+        + _b64url(json.dumps(claims).encode())
     )
     sig = other.sign(payload.decode().encode(), padding.PKCS1v15(), hashes.SHA256())
     forged = (payload + b"." + _b64url(sig)).decode()
@@ -152,7 +161,11 @@ def test_verify_rejects_bad_signature(rsa_keypair):
 
 def test_verify_rejects_wrong_issuer(rsa_keypair):
     v = make_verifier(rsa_keypair)
-    token = make_token(rsa_keypair[0], rsa_keypair[1], base_claims(iss="https://other.example/realms/x"))
+    token = make_token(
+        rsa_keypair[0],
+        rsa_keypair[1],
+        base_claims(iss="https://other.example/realms/x"),
+    )
     assert pytest.importorskip("asyncio").run(v.verify_token(token)) is None
 
 
@@ -187,7 +200,9 @@ def test_verify_rejects_wrong_audience_string(rsa_keypair):
 
 def test_verify_accepts_audience_list_containing_client(rsa_keypair):
     v = make_verifier(rsa_keypair)
-    token = make_token(rsa_keypair[0], rsa_keypair[1], base_claims(aud=["other", CLIENT]))
+    token = make_token(
+        rsa_keypair[0], rsa_keypair[1], base_claims(aud=["other", CLIENT])
+    )
     assert pytest.importorskip("asyncio").run(v.verify_token(token)) is not None
 
 
@@ -221,7 +236,9 @@ def test_verify_refetches_jwks_on_unknown_kid(rsa_keypair):
         return {"keys": [rotated_jwk]}  # rotated key on refetch
 
     v = make_verifier(rsa_keypair, fetch_jwks=fetch)
-    token = make_token(key, rotated_jwk, base_claims(), header_overrides={"kid": "rotated-kid"})
+    token = make_token(
+        key, rotated_jwk, base_claims(), header_overrides={"kid": "rotated-kid"}
+    )
     acc = pytest.importorskip("asyncio").run(v.verify_token(token))
     assert acc is not None
     assert state["call_count"] == 2
@@ -281,6 +298,7 @@ def test_verify_returns_none_on_fetch_error(rsa_keypair):
 # allowed_namespaces
 # ---------------------------------------------------------------------------
 
+
 def test_allowed_namespaces_from_client_roles():
     claims = base_claims()
     assert auth.allowed_namespaces(claims, CLIENT) == frozenset({"demo", "prod"})
@@ -311,12 +329,17 @@ def test_allowed_namespaces_empty_when_no_roles():
 # check_namespace
 # ---------------------------------------------------------------------------
 
+
 def _make_access_token(claims: dict) -> "auth.AccessToken":
     from mcp.server.auth.provider import AccessToken
 
     return AccessToken(
-        token="t", client_id=CLIENT, scopes=[], expires_at=None,
-        subject=claims.get("sub"), claims=claims,
+        token="t",
+        client_id=CLIENT,
+        scopes=[],
+        expires_at=None,
+        subject=claims.get("sub"),
+        claims=claims,
     )
 
 
@@ -324,8 +347,14 @@ def test_check_namespace_noop_when_auth_disabled():
     # Default fixture config has no issuer URL.
     from mcp.server.auth.provider import AccessToken
 
-    token = AccessToken(token="t", client_id=CLIENT, scopes=[], expires_at=None,
-                        subject=None, claims=None)
+    token = AccessToken(
+        token="t",
+        client_id=CLIENT,
+        scopes=[],
+        expires_at=None,
+        subject=None,
+        claims=None,
+    )
     with mock.patch.object(auth, "get_current_access_token", return_value=token):
         auth.check_namespace("anything")  # no raise
 
@@ -374,8 +403,14 @@ def test_check_namespace_requires_token_when_enabled():
     config.CONFIG = _auth_config()
     from mcp.server.auth.provider import AccessToken
 
-    token = AccessToken(token="t", client_id=CLIENT, scopes=[], expires_at=None,
-                        subject=None, claims=None)
+    token = AccessToken(
+        token="t",
+        client_id=CLIENT,
+        scopes=[],
+        expires_at=None,
+        subject=None,
+        claims=None,
+    )
     with mock.patch.object(auth, "get_current_access_token", return_value=token):
         with pytest.raises(auth.NamespaceNotAllowed, match="authentication required"):
             auth.check_namespace("demo")
@@ -404,6 +439,7 @@ def test_check_namespace_via_real_contextvar():
 # ---------------------------------------------------------------------------
 # build_auth_kwargs
 # ---------------------------------------------------------------------------
+
 
 def test_build_auth_kwargs_disabled_without_issuer():
     # Default fixture config has no issuer URL.

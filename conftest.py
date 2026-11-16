@@ -1,4 +1,4 @@
-﻿"""Root pytest configuration.
+"""Root pytest configuration.
 
 Ensures the package under ``src/`` is importable when it has not been
 installed (e.g. running pytest from a bare checkout without ``pip install -e .``).
