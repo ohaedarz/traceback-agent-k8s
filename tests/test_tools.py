@@ -1,5 +1,6 @@
 """Offline tests for the kube-traceback tools."""
 
+from kubetraceback import config
 from kubetraceback.tools import describe, diagnose, endpoints, events, health, pods
 from tests import mock_k8s
 
@@ -319,3 +320,61 @@ def test_diagnose_no_last_state_no_history_line(mock_k8s_api, crash_pod):
     mock_k8s_api.read_namespaced_pod_log.return_value = "x"
     result = diagnose.diagnose_pod_crash("web-app-7f9d4b8c6-x2k1p", namespace="default")
     assert "last termination:" not in result
+
+
+def test_diagnose_uses_default_namespace_when_omitted(
+    mock_k8s_api, crash_pod, app_config
+):
+    mock_k8s_api.read_namespaced_pod.return_value = crash_pod
+    mock_k8s_api.read_namespaced_pod_log.return_value = "traceback line"
+    result = diagnose.diagnose_pod_crash("web-app-7f9d4b8c6-x2k1p")
+    assert "web-app-7f9d4b8c6-x2k1p" in result
+    mock_k8s_api.read_namespaced_pod.assert_called_once_with(
+        name="web-app-7f9d4b8c6-x2k1p", namespace="default"
+    )
+
+
+# ---------------------------------------------------------------------------
+# default namespace: tools must fall back to the config snapshot when the
+# caller omits `namespace` (regression: k8s_client.default_namespace existed)
+# ---------------------------------------------------------------------------
+
+
+def test_find_pods_uses_default_namespace_when_omitted(
+    mock_k8s_api, running_pod, app_config
+):
+    mock_k8s_api.list_namespaced_pod.return_value = type(
+        "R", (), {"items": [running_pod]}
+    )()
+    result = pods.find_pods_by_name("web app")
+    assert "web-app-7f9d4b8c6-abcde" in result
+    mock_k8s_api.list_namespaced_pod.assert_called_once_with(namespace="default")
+
+
+def test_events_uses_default_namespace_when_omitted(mock_k8s_api, app_config):
+    mock_k8s_api.list_namespaced_event.return_value = type("R", (), {"items": []})()
+    result = events.get_cluster_events()
+    assert "namespace 'default'" in result
+
+
+def test_services_uses_default_namespace_when_omitted(mock_k8s_api, app_config):
+    mock_k8s_api.list_namespaced_service.return_value = type("R", (), {"items": []})()
+    result = endpoints.list_services()
+    assert "namespace 'default'" in result
+
+
+def test_pod_describe_uses_default_namespace_when_omitted(mock_k8s_api, app_config):
+    mock_k8s_api.read_namespaced_pod.side_effect = RuntimeError("not found")
+    describe.get_pod_describe("missing")
+    mock_k8s_api.read_namespaced_pod.assert_called_once()
+    assert mock_k8s_api.read_namespaced_pod.call_args.kwargs["namespace"] == "default"
+
+
+def test_default_namespace_honors_config_override(mock_k8s_api, app_config):
+    # Re-set CONFIG after the autouse fixture so the override takes effect.
+    base = dict(app_config._s)
+    base["default_namespace"] = "demo"
+    config.CONFIG = config._Config(base)
+    mock_k8s_api.list_namespaced_pod.return_value = type("R", (), {"items": []})()
+    pods.find_pods_by_name("web app")
+    mock_k8s_api.list_namespaced_pod.assert_called_once_with(namespace="demo")

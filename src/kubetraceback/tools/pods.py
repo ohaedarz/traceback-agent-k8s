@@ -7,7 +7,7 @@ _MAX_RESULTS = 10
 
 
 @mcp.tool()
-def find_pods_by_name(search_keyword: str, namespace: str = "default") -> str:
+def find_pods_by_name(search_keyword: str, namespace: str | None = None) -> str:
     """
     Resolve a fuzzy keyword to exact pod names in a namespace.
     Returns a compact table of matching pod names and their phase.

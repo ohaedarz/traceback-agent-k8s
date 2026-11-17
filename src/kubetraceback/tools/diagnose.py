@@ -27,14 +27,14 @@ def _tail(text: str, n: int) -> str:
 
 
 @mcp.tool()
-def diagnose_pod_crash(pod_name: str, namespace: str = "default") -> str:
+def diagnose_pod_crash(pod_name: str, namespace: str | None = None) -> str:
     """
     Diagnose a crashing pod: reports container states, termination reasons,
     exit codes, and a tailed log buffer (previous container if CrashLooping).
     """
     try:
         api = k8s_client.get_core_api()
-        ns = namespace or config.CONFIG.default_namespace
+        ns = namespace or k8s_client.default_namespace()
         auth.check_namespace(ns)
 
         tail = config.CONFIG.log_tail_lines

@@ -22,7 +22,7 @@ def _format_event(event) -> str:
 
 
 @mcp.tool()
-def get_cluster_events(namespace: str = "default") -> str:
+def get_cluster_events(namespace: str | None = None) -> str:
     """
     Fetches the last cluster lifecycle events in a namespace (read-only) to
     cross-reference with failing pods: scheduling, image pull, probe, and
@@ -52,7 +52,7 @@ def get_cluster_events(namespace: str = "default") -> str:
 
 
 @mcp.tool()
-def get_pod_events(pod_name: str, namespace: str = "default") -> str:
+def get_pod_events(pod_name: str, namespace: str | None = None) -> str:
     """
     Fetches recent events for a single pod (read-only): OOMKilled,
     BackOff, FailedScheduling, image pull and probe failures. Use to

@@ -67,7 +67,7 @@ def _usage_line(pod_name: str, ns: str) -> str | None:
 
 
 @mcp.tool()
-def get_pod_describe(pod_name: str, namespace: str = "default") -> str:
+def get_pod_describe(pod_name: str, namespace: str | None = None) -> str:
     """
     Compact 'kubectl describe pod' (read-only): phase, conditions, container
     images/ports, readiness/liveness probe config, resource requests/limits,

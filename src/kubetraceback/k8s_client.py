@@ -20,6 +20,11 @@ from kubetraceback import config
 _core_api: client.CoreV1Api | None = None
 
 
+def default_namespace() -> str:
+    """Return the default namespace from the startup config snapshot."""
+    return config.CONFIG.default_namespace
+
+
 def get_core_api() -> client.CoreV1Api:
     """Return a cached CoreV1Api, loading configuration on first call."""
     global _core_api

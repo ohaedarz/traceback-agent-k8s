@@ -22,7 +22,7 @@ def _service_table(services, ns: str) -> str:
 
 
 @mcp.tool()
-def list_services(namespace: str = "default") -> str:
+def list_services(namespace: str | None = None) -> str:
     """
     Lists services in a namespace (read-only) with their ports and pod
     selectors. First step when debugging 'service exists but gets 503':
@@ -41,7 +41,7 @@ def list_services(namespace: str = "default") -> str:
 
 
 @mcp.tool()
-def get_service_endpoints(service: str, namespace: str = "default") -> str:
+def get_service_endpoints(service: str, namespace: str | None = None) -> str:
     """
     Reports the ready endpoints backing a service (read-only). A service with
     zero endpoints is the classic cause of 503/502 from an ingress. Also shows

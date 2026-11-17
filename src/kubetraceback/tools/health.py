@@ -32,7 +32,7 @@ def handshake() -> str:
 
 
 @mcp.tool()
-def cluster_status(namespace: str = "default") -> str:
+def cluster_status(namespace: str | None = None) -> str:
     """
     Deep health check. Lists pods in a namespace (read-only) to verify the
     kubeconfig/in-cluster connection works, returning pod count or error.
